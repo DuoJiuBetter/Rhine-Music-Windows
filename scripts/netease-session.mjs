@@ -26,7 +26,7 @@ export function protectSecret(mode, input) {
 
 export class NeteaseSessionStore {
   constructor(dataDir, provider = 'netease') {
-    if (!['netease', 'qq', 'kugou', 'bodian'].includes(provider)) throw new Error('Unsupported session provider');
+    if (!['netease', 'qq', 'bodian'].includes(provider)) throw new Error('Unsupported session provider');
     this.file = dataDir && process.platform === 'win32' ? path.join(dataDir, `${provider}-session.dpapi`) : undefined;
   }
   async load() {

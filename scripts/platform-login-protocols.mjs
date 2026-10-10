@@ -1,19 +1,13 @@
-import { createHash, randomUUID, publicEncrypt, constants } from 'node:crypto';
-import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { QQLoginSession, qqLoginUrl } from './qq-login-session.mjs';
 import { validBodianCredential } from './bodian-protocol.mjs';
 
-// Protocol references and the KuGou MIT attribution are recorded in
-// docs/WINDOWS-PERF11.md and third-party/KuGouMusicApi-LICENSE.txt.
-const require = createRequire(import.meta.url);
 const failure = (message, status = 502) => Object.assign(new Error(message), { status });
-const md5 = text => createHash('md5').update(text).digest('hex');
 const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 120) : '';
 const readJson = text => { try { return JSON.parse(text); } catch { throw failure('平台响应格式发生变化。'); } };
-const hosts = new Set(['open.weixin.qq.com', 'lp.open.weixin.qq.com', 'u.y.qq.com', 'c.y.qq.com', 'c6.y.qq.com', 'ssl.ptlogin2.qq.com', 'ssl.ptlogin2.graph.qq.com', 'ptlogin2.graph.qq.com', 'graph.qq.com', 'login-user.kugou.com', 'gateway.kugou.com', 'lyrics.kugou.com']);
+const hosts = new Set(['open.weixin.qq.com', 'lp.open.weixin.qq.com', 'u.y.qq.com', 'c.y.qq.com', 'c6.y.qq.com', 'ssl.ptlogin2.qq.com', 'ssl.ptlogin2.graph.qq.com', 'ptlogin2.graph.qq.com', 'graph.qq.com']);
 const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-const kugouKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGWXngpeIW5GxoQGao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB\n-----END PUBLIC KEY-----';
 const hash33 = (value, seed = 0) => { let result = seed; for (const letter of value) result = (result * 33 + letter.charCodeAt(0)) | 0; return result & 2147483647; };
 const cookiesFrom = headers => Object.fromEntries(headers.getSetCookie().slice(0, 32).flatMap(value => {
   const match = /^([A-Za-z0-9_-]{1,64})=([^;\r\n]{0,2048})/.exec(value); return match ? [[match[1], match[2]]] : [];
@@ -23,10 +17,9 @@ export function validPlatformCredential(provider, value) {
   if (!value || typeof value !== 'object') return false;
   if (provider === 'bodian') return validBodianCredential(value);
   return provider === 'qq'
-    ? /^[1-9]\d{0,19}$/.test(value.musicid) && typeof value.musickey === 'string' && /^[A-Za-z0-9_=-]{8,4096}$/.test(value.musickey) && (value.loginType === undefined || [1, 2].includes(value.loginType))
+    && /^[1-9]\d{0,19}$/.test(value.musicid) && typeof value.musickey === 'string' && /^[A-Za-z0-9_=-]{8,4096}$/.test(value.musickey) && (value.loginType === undefined || [1, 2].includes(value.loginType))
       && (value.strMusicid === undefined || /^[1-9]\d{0,19}$/.test(value.strMusicid))
-      && (value.encryptUin === undefined || /^[A-Za-z0-9_+/=-]{1,256}$/.test(value.encryptUin))
-    : provider === 'kugou' && /^[1-9]\d{0,14}$/.test(value.userid) && typeof value.token === 'string' && /^[A-Za-z0-9_-]{8,4096}$/.test(value.token) && /^\d{1,40}$/.test(value.mid) && /^[A-Za-z0-9-]{1,64}$/.test(value.dev);
+      && (value.encryptUin === undefined || /^[A-Za-z0-9_+/=-]{1,256}$/.test(value.encryptUin));
 }
 
 // Preserve the distinct music account IDs. In particular WeChat's string ID
@@ -62,7 +55,7 @@ function qqResponse(result, block, operation) {
 
 /** Fixed HTTPS endpoints only; no evaluation of upstream callback JavaScript. */
 export class PlatformLoginProtocols {
-  constructor(provider, fetcher = fetch) { this.provider = provider; this.fetcher = fetcher; this.active = 0; }
+  constructor(provider, fetcher = fetch) { if (provider !== 'qq') throw new Error('Unsupported login protocol'); this.provider = provider; this.fetcher = fetcher; this.active = 0; }
   async request(url, { signal, method = 'GET', body, headers = {}, image = false, maxBytes = 524288, withHeaders = false, manual = false } = {}) {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' || !hosts.has(parsed.hostname) || parsed.port || parsed.username || parsed.password) throw failure('不支持的登录服务地址。');
@@ -85,7 +78,7 @@ export class PlatformLoginProtocols {
       return withHeaders ? { image: value, headers: response.headers } : value;
     } catch (error) {
       if (error.status) throw error;
-      const catalog = ['u.y.qq.com', 'c.y.qq.com', 'gateway.kugou.com', 'lyrics.kugou.com'].includes(parsed.hostname);
+      const catalog = ['u.y.qq.com', 'c.y.qq.com'].includes(parsed.hostname);
       throw Object.assign(failure(catalog ? '平台音源或曲库请求失败或超时，请稍后重试。' : '平台登录请求失败或超时，请稍后重试。'), { retryable: true, cause: error });
     } finally { this.active--; }
   }
@@ -120,17 +113,6 @@ export class PlatformLoginProtocols {
     const result = readJson(await this.request(`https://c.y.qq.com${path}?${query}`, { signal, headers: { Referer: 'https://y.qq.com/portal/profile.html', Cookie: auth.cookie }, maxBytes: 2097152 }));
     return qqResponse(result, result, '账号资料');
   }
-  async kugou(path, values, { credential, device, body, signal, router, android = false, base: requestedBase, clearDefault = false, keyHash, full = false, dfid = '-', headers = {} } = {}) {
-    const params = { ...(clearDefault ? {} : { dfid, mid: credential?.mid || device?.mid || '0', uuid: '-', appid: 1005, clientver: 20489, clienttime: Math.floor(Date.now() / 1000), ...(credential ? { token: credential.token, userid: credential.userid } : {}) }), ...values };
-    if (keyHash) params.key = md5(`${keyHash}57ae12eb6890223e355ccfcb74edf70d${params.appid}${params.mid}${params.userid || 0}`);
-    const salt = android || body ? 'OIlwieks28dk2k092lksi2UIkp' : 'NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt';
-    const serialized = body ? JSON.stringify(body) : '';
-    params.signature = md5(salt + Object.keys(params).sort().map(key => `${key}=${params[key]}`).join('') + serialized + salt);
-    const base = requestedBase || (android || body ? 'https://gateway.kugou.com' : 'https://login-user.kugou.com');
-    const result = readJson(await this.request(`${base}${path}?${new URLSearchParams(params)}`, { method: body ? 'POST' : 'GET', body: serialized || undefined, headers: { dfid, mid: String(params.mid || '0'), clienttime: String(params.clienttime || Math.floor(Date.now() / 1000)), ...(body ? { 'Content-Type': 'application/json' } : {}), ...(router || body ? { 'x-router': router || 'usercenter.kugou.com' } : {}), ...headers }, signal, maxBytes: 2097152 }));
-    if (result.status === 0 || (result.error_code && result.error_code !== 0) || (result.errcode && result.errcode !== 0)) throw failure('酷狗音乐请求未成功，可能需要重新登录或当前账号没有权限。');
-    return full ? result : result.data;
-  }
   async start(signal, method = 'qq') {
     if (this.provider === 'qq') {
       if (method !== 'wechat') {
@@ -148,12 +130,6 @@ export class PlatformLoginProtocols {
       if (!key) throw failure('QQ 音乐二维码暂时无法生成。');
       return { key, method: 'wechat', image: await this.request(`https://open.weixin.qq.com/connect/qrcode/${key}`, { signal, image: true }) };
     }
-    const dev = randomUUID(), device = { dev, mid: BigInt(`0x${md5(dev)}`).toString() };
-    const data = await this.kugou('/v2/qrcode', { appid: 1001, type: 1, plat: 4, qrcode_txt: 'https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1005&', srcappid: 2919 }, { device, signal });
-    const key = data?.qrcode;
-    if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{8,256}$/.test(key)) throw failure('酷狗音乐二维码暂时无法生成。');
-    const QRCode = require('qrcode'); // Already supplied by the locked NetEase SDK.
-    return { key, device, image: await QRCode.toDataURL(`https://h5.kugou.com/apps/loginQRCode/html/index.html?qrcode=${key}`, { width: 192, margin: 2 }) };
   }
   async poll(challenge, signal) {
     if (this.provider === 'qq') {
@@ -170,14 +146,6 @@ export class PlatformLoginProtocols {
       if (!validPlatformCredential('qq', credential)) throw failure('QQ 音乐未返回有效登录信息。');
       return { state: 'authorized', credential, profile: { userId: credential.musicid, nickname: clean(user.nick || user.nickname) || 'QQ 音乐用户' } };
     }
-    const data = await this.kugou('/v2/get_userinfo_qrcode', { plat: 4, srcappid: 2919, qrcode: challenge.key, dev: challenge.device.dev }, { device: challenge.device, signal });
-    if (data?.status === 0) return { state: 'expired' };
-    if (data?.status === 1) return { state: 'waiting' };
-    if (data?.status === 2) return { state: 'scanned' };
-    if (data?.status !== 4) throw failure('酷狗音乐扫码状态暂时不可用。');
-    const credential = { userid: String(data.userid || ''), token: data.token, ...challenge.device };
-    if (!validPlatformCredential('kugou', credential)) throw failure('酷狗音乐未返回有效登录信息。');
-    return { state: 'authorized', credential, profile: { userId: credential.userid, nickname: clean(data.nickname || data.nick_name) || '酷狗音乐用户' } };
   }
   async pollQQ(challenge, signal) {
     const cookies = challenge.cookies ||= new QQLoginSession();
@@ -231,11 +199,5 @@ export class PlatformLoginProtocols {
       const user = await this.qqRpc('music.UserInfo.userInfoServer', 'GetLoginUserInfo', {}, credential, signal);
       return { userId: credential.musicid, nickname: clean(user.nick || user.nickname || user.info?.nick) || 'QQ 音乐用户' };
     }
-    const input = Buffer.from(JSON.stringify({ token: credential.token, clienttime: Math.floor(Date.now() / 1000) }));
-    if (input.length > 128) throw failure('酷狗登录信息格式发生变化，请重新扫码。');
-    const padded = Buffer.alloc(128); input.copy(padded);
-    const p = publicEncrypt({ key: kugouKey, padding: constants.RSA_NO_PADDING }, padded).toString('hex').toUpperCase();
-    const user = await this.kugou('/v3/get_my_info', { plat: 1 }, { credential, signal, body: { visit_time: Math.floor(Date.now() / 1000), usertype: 1, p, userid: Number(credential.userid) } });
-    return { userId: credential.userid, nickname: clean(user?.nickname || user?.nick_name) || '酷狗音乐用户' };
   }
 }

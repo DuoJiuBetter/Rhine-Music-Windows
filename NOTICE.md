@@ -57,7 +57,7 @@ Perf16 新增波点音乐适配，扫码、请求签名、个人歌单与歌词�
 
 Windows 在线搜索适配使用 Binaryify 的 NeteaseCloudMusicApi 4.32.0（MIT）。完整许可保存在 `third-party/NETEASE-API-LICENSE.txt`，锁定版本见 package-lock.json。它是第三方接口实现，非网易官方 SDK；网易云歌曲、封面与资料的权利仍归各权利人，依赖的 MIT 许可不重新授权这些内容。在线音频只播放网易云返回的音源，不把在线查询内容纳入发布包。
 
-Perf11 新增 QQ 音乐与酷狗音乐协议适配。QQ 接口参考 [ylw1997/qqmusic-api](https://github.com/ylw1997/qqmusic-api) 和 [Suxiaoqinx/QQMusicapi](https://github.com/Suxiaoqinx/QQMusicapi) 的公开接口描述并独立实现；未分发其完整 SDK。酷狗协议参数与签名参考 [MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)，保留其 [MIT 原文](third-party/KuGouMusicApi-LICENSE.txt)。平台商标、歌曲、封面、歌词、账号数据各归相应权利人；协议代码许可不授权音乐内容，适配不表示官方合作。账号、在线查询内容及研究源仓库不随发布包分发，具体接入和验证边界见 [Perf11 说明](docs/WINDOWS-PERF11.md)。
+QQ 音乐接口参考 [ylw1997/qqmusic-api](https://github.com/ylw1997/qqmusic-api) 和 [Suxiaoqinx/QQMusicapi](https://github.com/Suxiaoqinx/QQMusicapi) 的公开接口描述并独立实现；未分发其完整 SDK。平台商标、歌曲、封面、歌词、账号数据各归相应权利人；协议代码许可不授权音乐内容，适配不表示官方合作。账号、在线查询内容及研究源仓库不随发布包分发，具体接入和验证边界见 [Perf11 说明](docs/WINDOWS-PERF11.md)。
 
 Wikipedia 摘要、Wikidata 与 MusicBrainz 数据按其来源许可处理。客户端保存介绍时同时保存来源链接、取得时间和许可说明；此类用户自行查询的缓存不纳入项目 MIT 授权，也不进入发布包。MusicBrainz 将核心数据和补充数据分别授权，详见[官方数据许可](https://musicbrainz.org/doc/About/Data_License)；不能仅因为程序开源就统一将数据改授 MIT。
 

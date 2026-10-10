@@ -34,7 +34,7 @@
 
 ![网络曲库搜索界面](docs/media/windows-preview/network-search.png)
 
-根据酷狗公开的[用户服务协议](https://m.kugou.com/html/agreement.html)，未经合法授权使用第三方工具或服务接入其软件及相关系统受到限制。本项目没有采用这类非官方接入方式，也未集成酷狗的[官方曲库开放组件](https://open.kugou.com/docs/open-player/)，因此当前版本不提供酷狗账号登录、曲库搜索或个人歌单读取功能。维护者仅依据公开文档作出这一实现选择，未与酷狗方面沟通。更多平台边界见 [第三方平台与权利说明](PLATFORM-NOTICE.md)。
+根据酷狗公开的[用户服务协议](https://m.kugou.com/html/agreement.html)，未经合法授权使用第三方工具或服务接入其软件及相关系统受到限制。当前公开版已移除早期实验的酷狗协议实现，不提供酷狗登录、曲库搜索或个人歌单读取；也没有集成其[官方曲库开放组件](https://open.kugou.com/docs/open-player/)。这一决定仅基于公开文档，维护者未与酷狗方面沟通。更多平台边界见 [第三方平台与权利说明](PLATFORM-NOTICE.md)。
 
 操作界面截图与功能说明见 [在线音乐与平台登录](docs/WINDOWS-ONLINE-MUSIC.md)。
 

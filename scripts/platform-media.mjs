@@ -3,10 +3,9 @@ export function platformMediaUrl(provider, value, cover = false) {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password) return undefined;
-    if (!['qq', 'kugou', 'bodian'].includes(provider)) return undefined;
-    const domains = provider === 'bodian' ? ['kuwo.cn'] : provider === 'qq' ? cover ? ['gtimg.cn', 'gtimg.com'] : ['qqmusic.qq.com']
-      : cover ? ['kgimg.com', 'imge.kugou.com', 'img.kugou.com', 'imgessl.kugou.com', 'imgssl.kugou.com'] : ['kugou.com', 'kgimg.com'];
-    if (!matches(url.hostname, domains) || (!cover && provider === 'kugou' && !/^(?:fs|dl|webfs|trackercdn|audiocdn)/.test(url.hostname))) return undefined;
+    if (!['qq', 'bodian'].includes(provider)) return undefined;
+    const domains = provider === 'bodian' ? ['kuwo.cn'] : cover ? ['gtimg.cn', 'gtimg.com'] : ['qqmusic.qq.com'];
+    if (!matches(url.hostname, domains)) return undefined;
     // Some multi-level Kuwo CDN endpoints do not offer matching TLS certificates.
     // Preserve their returned scheme; never forward account credentials to media.
     if (provider !== 'bodian' || !url.hostname.endsWith('.kwcdn.kuwo.cn')) url.protocol = 'https:';
@@ -39,7 +38,7 @@ export class PlatformCoverStore {
     if (this.pending.has(key)) return this.pending.get(key);
     if (this.pending.size >= 36) throw Object.assign(new Error('封面请求繁忙。'), { status: 429 });
     const operation = this.run(async () => {
-      const response = await this.fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { Referer: provider === 'qq' ? 'https://y.qq.com/' : provider === 'bodian' ? 'https://bodian.kuwo.cn/' : 'https://www.kugou.com/' } });
+      const response = await this.fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { Referer: provider === 'qq' ? 'https://y.qq.com/' : 'https://bodian.kuwo.cn/' } });
       const type = response.headers.get('content-type')?.split(';')[0];
       if (!response.ok || !['image/jpeg', 'image/png', 'image/webp'].includes(type) || Number(response.headers.get('content-length') || 0) > 4194304) throw new Error('平台封面暂时不可用。');
       const chunks = []; let size = 0;

@@ -1,52 +1,36 @@
-import { randomUUID, randomInt, createHash } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import { PlatformLoginProtocols } from './platform-login-protocols.mjs';
 import { platformCover, platformMediaUrl } from './platform-media.mjs';
 
-const names = { qq: 'QQ 音乐', kugou: '酷狗音乐', bodian: '波点音乐' };
+const names = { qq: 'QQ 音乐', bodian: '波点音乐' };
 const failure = (message, status = 502) => Object.assign(new Error(message), { status });
 const clean = value => typeof value === 'string' ? value.replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 240) : '';
 const count = value => Math.min(100000, Math.max(0, Math.floor(Number(value) || 0)));
-const md5 = value => createHash('md5').update(value).digest('hex');
 export function platformSongId(provider, id) {
   const value = String(id);
-  if (!(provider === 'qq' ? /^[A-Za-z0-9]{8,32}$/ : /^[a-fA-F0-9]{32}$/).test(value)) throw failure('无效的平台歌曲 ID。', 400);
-  return provider === 'kugou' ? value.toLowerCase() : value;
+  if (provider !== 'qq' || !/^[A-Za-z0-9]{8,32}$/.test(value)) throw failure('无效的平台歌曲 ID。', 400);
+  return value;
 }
 export function platformTrack(provider, item) {
-  if (provider === 'qq') {
-    const song = item?.songInfo || item?.songinfo || item;
-    const id = song?.mid || song?.songmid, album = song?.album || {};
-    if (typeof id !== 'string' || !/^[A-Za-z0-9]{8,32}$/.test(id) || !clean(song.title || song.name || song.songname)) return undefined;
-    const albumMid = album.mid || song.albummid;
-    const mediaId = song.file?.media_mid || song.strMediaMid;
-    const singers = song.singer || [];
-    return { id: `qq-${id}`, albumId: `qq-album-${albumMid || album.id || id}`, title: clean(song.title || song.name || song.songname),
-      artist: (Array.isArray(singers) ? singers : []).map(person => clean(person.name)).filter(Boolean).join(' / ') || '未知歌手',
-      duration: Math.max(0, Number(song.interval) || 0), format: '在线音频', browserPlayable: true, audioUrl: '', relativePath: '', localDecodable: false,
-      onlineSource: { provider, id, albumTitle: clean(album.title || album.name || song.albumname), albumId: String(albumMid || ''),
-        ...(typeof mediaId === 'string' && /^[A-Za-z0-9]{8,32}$/.test(mediaId) ? { mediaId } : {}),
-        coverUrl: typeof albumMid === 'string' && /^[A-Za-z0-9]{8,32}$/.test(albumMid) ? platformCover('qq', `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`) : undefined,
-        pageUrl: `https://y.qq.com/n/ryqq/songDetail/${id}`, fee: song.pay?.pay_play ? 1 : 0 } };
-  }
-  const song = item?.base || item?.fileinfo || item;
-  const hash = song?.hash || song?.Hash || song?.FileHash || item?.filehash;
-  if (typeof hash !== 'string' || !/^[A-Fa-f0-9]{32}$/.test(hash)) return undefined;
-  const filename = clean(song.filename || song.FileName || song.name), parts = filename.split(' - ');
-  const title = clean(song.songname || song.SongName || song.song_name || (parts.length > 1 ? parts.slice(1).join(' - ') : filename));
-  if (!title) return undefined;
-  const album = item.albuminfo || song.albuminfo || {}, authors = item.authors || song.authors;
-  const artist = clean(song.singername || song.SingerName || song.author_name) || (Array.isArray(authors) ? authors.map(author => clean(author.author_name || author.name)).filter(Boolean).join(' / ') : '') || (parts.length > 1 ? parts[0] : '未知歌手');
-  const id = hash.toLowerCase(), albumId = String(song.album_id || song.AlbumID || album.album_id || album.id || '');
-  return { id: `kugou-${id}`, albumId: `kugou-album-${albumId || id}`, title, artist,
-    duration: Math.max(0, Number(song.timelen) / 1000 || Number(song.Duration || song.duration || song.time_length) || 0),
-    format: '在线音频', browserPlayable: true, audioUrl: '', relativePath: '', localDecodable: false,
-    onlineSource: { provider, id, albumId, albumTitle: clean(song.album_name || song.AlbumName || album.album_name || album.name),
-      coverUrl: platformCover('kugou', song.sizable_cover || song.Image || song.img || album.sizable_cover || album.cover || item.cover),
-      pageUrl: `https://www.kugou.com/song/#hash=${id}`, fee: Number(song.privilege || song.Privilege) > 0 ? 1 : 0 } };
+  if (provider !== 'qq') return undefined;
+  const song = item?.songInfo || item?.songinfo || item;
+  const id = song?.mid || song?.songmid, album = song?.album || {};
+  if (typeof id !== 'string' || !/^[A-Za-z0-9]{8,32}$/.test(id) || !clean(song.title || song.name || song.songname)) return undefined;
+  const albumMid = album.mid || song.albummid;
+  const mediaId = song.file?.media_mid || song.strMediaMid;
+  const singers = song.singer || [];
+  return { id: `qq-${id}`, albumId: `qq-album-${albumMid || album.id || id}`, title: clean(song.title || song.name || song.songname),
+    artist: (Array.isArray(singers) ? singers : []).map(person => clean(person.name)).filter(Boolean).join(' / ') || '未知歌手',
+    duration: Math.max(0, Number(song.interval) || 0), format: '在线音频', browserPlayable: true, audioUrl: '', relativePath: '', localDecodable: false,
+    onlineSource: { provider, id, albumTitle: clean(album.title || album.name || song.albumname), albumId: String(albumMid || ''),
+      ...(typeof mediaId === 'string' && /^[A-Za-z0-9]{8,32}$/.test(mediaId) ? { mediaId } : {}),
+      coverUrl: typeof albumMid === 'string' && /^[A-Za-z0-9]{8,32}$/.test(albumMid) ? platformCover('qq', `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`) : undefined,
+      pageUrl: `https://y.qq.com/n/ryqq/songDetail/${id}`, fee: song.pay?.pay_play ? 1 : 0 } };
 }
 
 export class PlatformCatalog {
   constructor({ provider, auth, transport = new PlatformLoginProtocols(provider), now = Date.now }) {
+    if (!['qq', 'bodian'].includes(provider)) throw new Error('Unsupported catalog provider');
     this.provider = provider; this.auth = auth; this.transport = transport; transport.limit = 4; this.now = now;
     this.cache = new Map(); this.pending = new Map(); this.tracks = new Map(); this.owned = new Map(); this.waiting = []; this.active = 0;
   }
@@ -75,10 +59,6 @@ export class PlatformCatalog {
     const epoch = this.scope(), credential = this.auth.credential;
     return this.run(async () => { this.check(epoch); const value = await this.transport.qqHttp(path, params, credential); this.check(epoch); return value; });
   }
-  kg(path, params, options = {}, priority = false) {
-    const epoch = this.scope(), credential = this.auth.credential;
-    return this.run(async () => { this.check(epoch); const value = await this.transport.kugou(path, params, { ...options, credential, android: true }); this.check(epoch); return value; }, priority);
-  }
   async memo(key, task) {
     await this.auth.ready; const epoch = this.scope(), qualified = `${epoch}:${key}`;
     const cached = this.cache.get(qualified);
@@ -102,43 +82,18 @@ export class PlatformCatalog {
   search(query, offset = 0) {
     if (typeof query !== 'string' || !query.trim() || query.length > 100 || !Number.isInteger(offset) || offset < 0 || offset > 1000 || offset % 20) throw failure('搜索词或分页无效。', 400);
     return this.memo(`search:${query}:${offset}`, async () => {
-      let songs, total;
-      if (this.provider === 'qq') {
-        const data = await this.rpc('music.search.SearchCgiService', 'DoSearchForQQMusicDesktop', { query: query.trim(), page_num: offset / 20 + 1, num_per_page: 20, search_type: 0 });
-        songs = data.body?.song?.list; total = data.meta?.sum ?? data.body?.song?.sum;
-      } else {
-        const data = await this.kg('/v2/search/song', { keyword: query.trim(), page: offset / 20 + 1, pagesize: 20, platform: 'AndroidFilter', iscorrection: 1, privilegefilter: 0, area_code: 1, dopicfull: 1 }, { router: 'complexsearch.kugou.com' });
-        songs = data?.lists; total = data?.total;
-      }
+      const data = await this.rpc('music.search.SearchCgiService', 'DoSearchForQQMusicDesktop', { query: query.trim(), page_num: offset / 20 + 1, num_per_page: 20, search_type: 0 });
+      const songs = data.body?.song?.list;
+      const total = count(data.meta?.sum ?? data.body?.song?.sum);
       if (!Array.isArray(songs)) throw failure(`${names[this.provider]}搜索结果格式发生变化。`);
-      const tracks = this.remember(songs.slice(0, 20)); total = count(total);
+      const tracks = this.remember(songs.slice(0, 20));
       return { provider: this.provider, query: query.trim(), offset, limit: 20, total, hasMore: offset + 20 < total, tracks };
     });
   }
   playlists(offset = 0) {
     if (!Number.isInteger(offset) || offset < 0 || offset > 5000 || offset % 100) throw failure('歌单分页无效。', 400);
     return this.memo(`playlists:${offset}`, async () => {
-      let list, total;
-      if (this.provider === 'qq') {
-        return this.qqPlaylists(offset);
-      } else {
-        const { userid, token } = this.auth.credential;
-        const data = await this.kg('/v7/get_all_list', { plat: 1, userid: Number(userid), token }, { router: 'cloudlist.service.kugou.com', body: { userid, token, total_ver: 979, type: 2, page: offset / 100 + 1, pagesize: 100 } });
-        list = data?.list; total = data?.total || data?.total_count;
-        if (!Array.isArray(list)) throw failure('酷狗音乐歌单列表格式发生变化。');
-        total = Number.isFinite(Number(total)) ? Number(total) : offset + list.length + (list.length === 100 ? 1 : 0);
-      }
-      const playlists = list.slice(0, 100).flatMap(item => {
-        const qq = this.provider === 'qq';
-        const tid = String(item.tid || item.dissid || '0'), dirid = String(item.dirid ?? '0');
-        const listid = String(item.listid ?? item.list_id ?? '');
-        const id = qq ? `${dirid}-${tid}` : listid || String(item.global_collection_id || '');
-        if (!/^[\d-]{1,40}$/.test(id) || !/^\d{1,16}$/.test(qq ? dirid : id)) return [];
-        const value = { id, name: clean(item.name || item.title || item.special_name) || '未命名歌单', trackCount: count(item.song_cnt ?? item.song_count ?? item.count),
-          coverUrl: platformCover(this.provider, item.cover_url || item.cover || item.imgurl || item.special_cover), owned: qq ? String(item.creator?.uin || item.uin || this.auth.credential.musicid) === this.auth.credential.musicid : !item.is_collect };
-        this.owned.set(id, { value, tid, dirid, listid, type: Number(item.type) || 0, globalId: String(item.global_collection_id || '') }); return [value];
-      });
-      return { provider: this.provider, playlists, offset, limit: 100, hasMore: offset + 100 < total };
+      return this.qqPlaylists(offset);
     });
   }
   async qqPlaylists(offset) {
@@ -182,41 +137,22 @@ export class PlatformCatalog {
     return this.memo(`tracks:${id}:${offset}`, async () => {
       const playlist = this.owned.get(id);
       if (!playlist) throw failure('这个歌单不在当前账号的歌单列表中。', 403);
-      let songs, total;
-      if (this.provider === 'qq') {
-        // CgiGetDiss identifies the current account through its authenticated
-        // request. Liked songs use disstid 0 / dirid 201; encrypt_uin is not a
-        // prerequisite. A separate profile lookup could block valid sessions.
-        const data = await this.rpc('music.srfDissInfo.DissInfo', 'CgiGetDiss', { disstid: Number(playlist.tid), dirid: Number(playlist.dirid), tag: true, song_begin: offset, song_num: 50, userinfo: true, orderlist: true, onlysonglist: false });
-        songs = data.songlist || data.songList; total = data.total_song_num ?? data.songnum ?? data.dirinfo?.songnum ?? playlist.value.trackCount;
-      } else if (playlist.listid) {
-        const { userid, token } = this.auth.credential;
-        const data = await this.kg('/v4/get_list_all_file_v3', {}, { router: 'cloudlist.service.kugou.com', body: { listid: Number(playlist.listid), userid, type: playlist.type, page: offset / 50 + 1, pagesize: 50, area_code: 1, allplatform: 1, show_cover: 1, token } });
-        songs = data?.info || data?.list || data?.songs; total = data?.total ?? data?.count ?? playlist.value.trackCount;
-      } else {
-        const data = await this.kg('/pubsongs/v2/get_other_list_file_nofilt', { area_code: 1, begin_idx: offset, plat: 1, type: 1, mode: 1, personal_switch: 1, extend_fields: 'abtags,hot_cmt,popularization', pagesize: 50, global_collection_id: playlist.globalId });
-        songs = data?.songs; total = data?.total ?? data?.count ?? playlist.value.trackCount;
-      }
+      // CgiGetDiss identifies the current account through its authenticated
+      // request. Liked songs use disstid 0 / dirid 201; encrypt_uin is not a
+      // prerequisite. A separate profile lookup could block valid sessions.
+      const data = await this.rpc('music.srfDissInfo.DissInfo', 'CgiGetDiss', { disstid: Number(playlist.tid), dirid: Number(playlist.dirid), tag: true, song_begin: offset, song_num: 50, userinfo: true, orderlist: true, onlysonglist: false });
+      const songs = data.songlist || data.songList;
       if (!Array.isArray(songs)) throw failure(`${names[this.provider]}歌单歌曲格式发生变化。`);
-      total = count(total); playlist.value.trackCount = total;
+      const total = count(data.total_song_num ?? data.songnum ?? data.dirinfo?.songnum ?? playlist.value.trackCount);
+      playlist.value.trackCount = total;
       return { provider: this.provider, playlistId: id, offset, limit: 50, total, hasMore: offset + 50 < total, tracks: this.remember(songs.slice(0, 50), true) };
     });
   }
   async prepare(value) {
     await this.auth.ready; const epoch = this.scope(), id = platformSongId(this.provider, value);
-    let url, bitrate;
-    if (this.provider === 'qq') {
-      url = await this.qqAudioUrl(id, epoch);
-    } else {
-      const track = this.tracks.get(id), source = track?.onlineSource;
-      const data = await this.kg('/v5/url', { album_id: Number(source?.albumId) || 0, area_code: 1, hash: id, ssa_flag: 'is_fromtrack', version: 11430, page_id: 151369488, quality: 128, album_audio_id: 0, behavior: 'play', pid: 2, cmd: 26, pidversion: 3001, IsFreePart: 0, ppage_id: '463467626,350369493,788954147', cdnBackup: 1, module: '', clientver: 11430 }, { router: 'trackercdn.kugou.com', keyHash: id, full: true, dfid: randomUUID().replaceAll('-', '').slice(0, 24) }, true);
-      const result = data.data || data; url = Array.isArray(result.url) ? result.url[0] : result.url; bitrate = Number(result.bitRate || result.bitrate) || undefined;
-    }
-    const audioUrl = platformMediaUrl(this.provider, url);
-    if (!audioUrl) throw failure(this.provider === 'qq'
-      ? 'QQ 音乐本次未返回可用播放地址，不能据此判断会员状态。请在官方客户端确认这首歌是否开放试听，或重新登录后重试。'
-      : `${names[this.provider]}未提供播放地址，可能需要会员、购买或所在地区的播放权限。`, 403);
-    return { audioUrl, bitrate, format: '在线音频' };
+    const audioUrl = platformMediaUrl('qq', await this.qqAudioUrl(id, epoch));
+    if (!audioUrl) throw failure('QQ 音乐本次未返回可用播放地址，不能据此判断会员状态。请在官方客户端确认这首歌是否开放试听，或重新登录后重试。', 403);
+    return { audioUrl, format: '在线音频' };
   }
   async qqAudioUrl(id, epoch) {
     const credential = this.auth.credential;
@@ -258,39 +194,19 @@ export class PlatformCatalog {
     const id = platformSongId(this.provider, value);
     return this.memo(`info:${id}`, async () => {
       let track = this.tracks.get(id), published, company, description, lyrics = { original: '', translated: '', instrumental: false, unavailable: false };
-      let metadataError;
-      if (this.provider === 'qq') {
-        const detail = await this.rpc('music.pf_song_detail_svr', 'get_song_detail_yqq', { song_mid: id });
-        track = this.remember([detail.track_info])[0];
-        if (!track) throw failure('QQ 音乐没有返回对应歌曲资料。', 404);
-        try {
-          const raw = await this.rpc('music.musichallSong.PlayLyricInfo', 'GetPlayLyricInfo', { songMid: id });
-          const decode = value => typeof value === 'string' ? (value.includes('[') ? value : Buffer.from(value.slice(0, 280000), 'base64').toString('utf8')).slice(0, 200000) : '';
-          lyrics.original = decode(raw.lyric); lyrics.translated = decode(raw.trans);
-        } catch (error) { lyrics.error = error.message; }
-        const info = detail.info || {};
-        const field = key => clean(info[key]?.content?.map(item => item.value).join(' / '));
-        published = field('pub_time'); company = field('company'); description = field('desc');
-      } else {
-        if (!track) throw failure('歌曲资料缓存已过期，请重新选择这首歌。', 404);
-        const source = track.onlineSource;
-        const [albumResult, lyricResult] = await Promise.allSettled([
-          source.albumId ? this.kg('/kmr/v2/albums', {}, { router: 'openapi.kugou.com', headers: { 'kg-tid': '255' }, body: { data: [{ album_id: source.albumId }], is_buy: 0, fields: 'album_id,album_name,publish_date,sizable_cover,intro,authors,author_name' } }) : Promise.resolve({}),
-          (async () => {
-            const result = await this.kg('/v1/search', { album_audio_id: 0, appid: 1005, clientver: 20489, duration: Math.round(track.duration * 1000), hash: id, keyword: `${track.artist} - ${track.title}`, lrctxt: 1, man: 'no' }, { base: 'https://lyrics.kugou.com', clearDefault: true, full: true });
-            const candidate = result.candidates?.[0];
-            if (!candidate) return '';
-            if (!/^\d{1,20}$/.test(String(candidate.id)) || !/^[A-Za-z0-9_-]{1,256}$/.test(candidate.accesskey)) throw failure('酷狗歌词格式发生变化。');
-            const lyric = await this.kg('/download', { ver: 1, client: 'android', id: candidate.id, accesskey: candidate.accesskey, fmt: 'lrc', charset: 'utf8' }, { base: 'https://lyrics.kugou.com', full: true });
-            return typeof lyric.content === 'string' ? Buffer.from(lyric.content.slice(0, 280000), 'base64').toString('utf8').slice(0, 200000) : '';
-          })(),
-        ]);
-        if (albumResult.status === 'fulfilled') { const album = Array.isArray(albumResult.value) ? albumResult.value[0] : albumResult.value?.[source.albumId] || albumResult.value; published = clean(album?.publish_date); description = clean(album?.intro); }
-        else metadataError = albumResult.reason.message;
-        if (lyricResult.status === 'fulfilled') lyrics.original = lyricResult.value; else lyrics.error = lyricResult.reason.message;
-      }
+      const detail = await this.rpc('music.pf_song_detail_svr', 'get_song_detail_yqq', { song_mid: id });
+      track = this.remember([detail.track_info])[0];
+      if (!track) throw failure('QQ 音乐没有返回对应歌曲资料。', 404);
+      try {
+        const raw = await this.rpc('music.musichallSong.PlayLyricInfo', 'GetPlayLyricInfo', { songMid: id });
+        const decode = value => typeof value === 'string' ? (value.includes('[') ? value : Buffer.from(value.slice(0, 280000), 'base64').toString('utf8')).slice(0, 200000) : '';
+        lyrics.original = decode(raw.lyric); lyrics.translated = decode(raw.trans);
+      } catch (error) { lyrics.error = error.message; }
+      const info = detail.info || {};
+      const field = key => clean(info[key]?.content?.map(item => item.value).join(' / '));
+      published = field('pub_time'); company = field('company'); description = field('desc');
       lyrics.unavailable = !lyrics.original && !lyrics.error;
-      return { track, album: { title: track.onlineSource.albumTitle, artist: track.artist, published, company, description }, lyrics, metadataError };
+      return { track, album: { title: track.onlineSource.albumTitle, artist: track.artist, published, company, description }, lyrics };
     });
   }
 }

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { PlatformAuth } from './platform-auth.mjs';
 import { PlatformCatalog, platformTrack } from './platform-catalog.mjs';
 import { PlatformLoginProtocols, qqCredential, validPlatformCredential } from './platform-login-protocols.mjs';
@@ -21,7 +20,7 @@ const image = 'data:image/png;base64,iVBORw0KGgo=';
 const deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
 const qqSong = index => ({ mid: `000Song${String(index).padStart(4, '0')}`, title: `Song ${index}`, interval: 120, singer: [{ name: 'Artist' }], album: { mid: '000Album0001', title: 'Album' } });
 function catalog(provider, transport) {
-  const auth = { ready: Promise.resolve(), epoch: 1, credential: provider === 'qq' ? credential : { userid: '456', token: 'synthetic_token', mid: '123', dev: 'synthetic-device' } };
+  const auth = { ready: Promise.resolve(), epoch: 1, credential };
   return { auth, api: new PlatformCatalog({ provider, auth, transport }) };
 }
 
@@ -193,42 +192,12 @@ test('QQ web profile requests keep long account IDs exact and do not leak upstre
   await assert.rejects(protocol.qqHttp('/arbitrary', {}, current), { status: 400 });
 });
 
-test('Kugou account playlist and search use separate documented paged routes', async () => {
-  const hash = 'ab'.repeat(16), calls = [];
-  const { api } = catalog('kugou', { kugou: async (path, params, options) => {
-    calls.push(path); assert.equal(options.credential.userid, '456');
-    if (path === '/v7/get_all_list') return { list: [{ listid: 17, name: 'Mine', count: 51 }], total: 1 };
-    if (path === '/v4/get_list_all_file_v3') { assert.equal(options.body.page, 2); return { info: [{ hash, filename: 'Artist - Song', timelen: 120000 }], total: 51 }; }
-    if (path === '/v2/search/song') return { lists: [{ FileHash: hash.toUpperCase(), SongName: 'Song', SingerName: 'Artist', Duration: 120 }], total: 1 };
-    throw new Error('Unexpected protocol');
-  } });
-  await api.playlists(); const page = await api.playlistTracks('17', 50);
-  assert.equal(page.tracks[0].onlineSource.provider, 'kugou'); assert.equal(page.tracks[0].duration, 120);
-  const search = await api.search('Song'); assert.equal(search.provider, 'kugou'); assert.equal(search.tracks[0].onlineSource.id, hash);
-  assert.deepEqual(calls, ['/v7/get_all_list', '/v4/get_list_all_file_v3', '/v2/search/song']);
-});
-
 test('response from an old account cannot repopulate its catalog cache', async () => {
   const pending = deferred(), started = deferred();
   const { api, auth } = catalog('qq', { qqRpc: () => { started.resolve(); return pending.promise; } });
   const request = api.search('Synthetic'); await started.promise; auth.epoch++;
   pending.resolve({ body: { song: { list: [qqSong(1)] } }, meta: { sum: 1 } });
   await assert.rejects(request, { status: 409 }); assert.equal(api.cache.size, 0);
-});
-
-test('Kugou signatures include the exact body and never expose a signed request on failure', async () => {
-  const protocols = new PlatformLoginProtocols('kugou', async (input, init) => {
-    const url = new URL(input), signature = url.searchParams.get('signature'); url.searchParams.delete('signature');
-    const canonical = [...url.searchParams.keys()].sort().map(key => `${key}=${url.searchParams.get(key)}`).join('');
-    const salt = 'OIlwieks28dk2k092lksi2UIkp';
-    assert.equal(signature, createHash('md5').update(salt + canonical + init.body + salt).digest('hex'));
-    assert.equal(init.headers['x-router'], 'cloudlist.service.kugou.com'); assert.equal(init.redirect, 'error');
-    return Response.json({ status: 1, data: { list: [] } });
-  });
-  assert.deepEqual(await protocols.kugou('/v7/get_all_list', {}, { android: true, router: 'cloudlist.service.kugou.com', body: { userid: '456', token: 'synthetic_token' } }), { list: [] });
-  await assert.rejects(protocols.request('https://localhost/private'), /不支持/);
-  protocols.fetcher = async () => { throw new Error('secret-token-in-upstream-error'); };
-  await assert.rejects(protocols.request('https://gateway.kugou.com/test'), error => !error.message.includes('secret-token'));
 });
 
 test('cover proxy deduplicates and queues downloads with four active transfers', async () => {
@@ -244,6 +213,6 @@ test('cover proxy deduplicates and queues downloads with four active transfers',
   const results = await Promise.all(jobs); assert.equal(await duplicate, results[0]); assert.equal(peak, 4);
   await assert.rejects(covers.get('qq', 'http://127.0.0.1/private'), { status: 400 });
   assert.equal(platformMediaUrl('qq', 'https://y.gtimg.cn.evil.example/image', true), undefined);
-  assert.equal(platformMediaUrl('kugou', 'https://www.kugou.com/audio'), undefined);
+  assert.equal(platformMediaUrl('unsupported', 'https://example.com/audio'), undefined);
   assert.equal(platformTrack('qq', { mid: '../bad', title: 'bad' }), undefined);
 });

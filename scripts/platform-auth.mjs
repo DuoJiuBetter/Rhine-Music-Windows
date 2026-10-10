@@ -7,7 +7,7 @@ const failure = (message, status = 502) => Object.assign(new Error(message), { s
 /** Each platform owns its encrypted session; the catalog observes account epochs. */
 export class PlatformAuth {
   constructor({ provider, dataDir, transport = provider === 'bodian' ? new BodianProtocol() : new PlatformLoginProtocols(provider), store = new NeteaseSessionStore(dataDir, provider), now = Date.now }) {
-    if (!['qq', 'kugou', 'bodian'].includes(provider)) throw new Error('Unsupported login provider');
+    if (!['qq', 'bodian'].includes(provider)) throw new Error('Unsupported login provider');
     this.provider = provider; this.transport = transport; this.store = store; this.now = now;
     this.epoch = 0; this.writes = Promise.resolve();
     this.ready = store.load().then(value => {
