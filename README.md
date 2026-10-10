@@ -47,14 +47,15 @@ npm run desktop:build
 `desktop:build` 会通过 Tauri 的 beforeBuild 再准备网页和运行时，产物放在 `release/Rhine-Music-Windows`。生成公开便携包请使用：
 
 ```powershell
+node scripts/build-public-native.mjs
 node scripts/package-public-release.mjs release/Rhine-Music-Windows
 ```
 
-该步骤创建独立的 `release/Rhine-Music-Windows-Perf21-Public` 和 ZIP，不修改输入包；排除可选 FFmpeg 二进制，补入公开说明、依赖许可和 SHA-256 清单，同时导出已提交的源码快照。不能只修改版本名就将旧二进制视为新版本。
+请在 Visual Studio x64 Developer 终端运行公开宿主构建；它在独立 target-public 目录编译并映射构建机路径。打包步骤创建独立的 `release/Rhine-Music-Windows-Perf21-Public` 和 ZIP，不修改输入包；排除可选 FFmpeg 二进制，补入公开说明、依赖许可和 SHA-256 清单，同时导出已提交的源码快照。不能只修改版本名就将旧二进制视为新版本。
 
 ## 验证与版本管理
 
-Perf21 已完成类型／语法检查、生产构建、锁定依赖的原生编译及便携包静态一致性校验。本次公开发布只调整发布文档和打包材料，沿用已构建的 Perf21 EXE；**没有重新运行播放器、WebView、GPU、音频或平台账号回归**。验证范围见 [Perf21](docs/WINDOWS-PERF21.md) 和 [验收记录](docs/WINDOWS-VALIDATION.md)，历史记录不代表当前版本的完整验收。
+Perf21 已完成类型／语法检查、生产构建、锁定依赖的原生编译及便携包静态一致性校验。本次公开发布沿用 Perf21 网页和服务代码，补齐文档、许可及打包材料；原生宿主重新编译以去掉编译机路径和发行版的开发目录回退，并补齐反馈命令的显式权限；**没有重新运行播放器、WebView、GPU、音频或平台账号回归**。验证范围见 [Perf21](docs/WINDOWS-PERF21.md) 和 [验收记录](docs/WINDOWS-VALIDATION.md)，历史记录不代表当前版本的完整验收。
 
 公开分支保留上游 Git 历史，Windows 版本以独立提交及预览标签管理。原开发工作区的完整历史与旧包保留用于回退；公开初始移植提交对应 Perf21 源码快照，不公开本机诊断文件、私人数据或开发机目录。
 

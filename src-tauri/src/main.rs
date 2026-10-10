@@ -96,7 +96,12 @@ fn desktop_open_feedback(url: &str) -> Result<(), String> {
 fn start_service(app: &tauri::AppHandle) -> Result<(MusicService, tauri::Url), Box<dyn std::error::Error>> {
     let resource_root = app.path().resource_dir()?.join("runtime");
     let runtime: PathBuf = if resource_root.join("node.exe").is_file() { resource_root }
-        else { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../desktop-runtime") };
+        else {
+            #[cfg(debug_assertions)]
+            { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../desktop-runtime") }
+            #[cfg(not(debug_assertions))]
+            { return Err("缺少 runtime 文件夹，请完整解压便携包后启动".into()); }
+        };
     let data = std::env::var_os("RHINE_DESKTOP_DATA_DIR").map(PathBuf::from)
         .unwrap_or(app.path().app_local_data_dir()?.join("music-data"));
     std::fs::create_dir_all(&data)?;

@@ -6,7 +6,7 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
-            "desktop_window_state", "desktop_window_action", "desktop_pick_folder", "desktop_open_link",
+            "desktop_window_state", "desktop_window_action", "desktop_pick_folder", "desktop_open_link", "desktop_open_feedback",
         ]),
     )).expect("desktop permission manifest");
 }
