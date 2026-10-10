@@ -10,7 +10,9 @@ const cargoHome = process.env.CARGO_HOME || path.join(os.homedir(), '.cargo');
 const rustupHome = process.env.RUSTUP_HOME || path.join(os.homedir(), '.rustup');
 const mappings = [[root, '/rhine-source'], [cargoHome, '/cargo'], [rustupHome, '/rust'], [os.homedir(), '/build-user']];
 const flags = mappings.flatMap(([from, to]) => [...new Set([from, from.replaceAll('\\', '/')])].map(prefix => `--remap-path-prefix=${prefix}=${to}`));
-const result = spawnSync(path.join(cargoHome, 'bin', 'cargo.exe'), ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--release', '--locked', '--offline'], {
+// Match Tauri CLI's production context; a bare cargo --release alone still
+// enables Tauri's development context and embeds its configuration directory.
+const result = spawnSync(path.join(cargoHome, 'bin', 'cargo.exe'), ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--release', '--features', 'tauri/custom-protocol', '--locked', '--offline'], {
   stdio: 'inherit',
   env: { ...process.env, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f'), CARGO_TARGET_DIR: path.join(root, 'src-tauri/target-public') },
 });
