@@ -22,6 +22,18 @@
 
 通过右上角“登录”选择网易云音乐、QQ 音乐或波点音乐。登录确认后，网络搜索会跟随当前平台切换；“我的歌单”读取该账号在对应平台可访问的歌单，选中歌曲后按平台实际返回的音源播放。登录成功不代表所有歌曲都能完整播放，片段、会员／地区权限、接口变化及平台风控都可能影响结果。
 
+**歌单总览**：以三维专辑架浏览账号中的歌单和歌曲。
+
+![歌单总览](docs/media/windows-preview/playlist-overview.png)
+
+**音乐账号**：在网易云音乐、QQ 音乐和波点音乐之间选择登录平台。
+
+![音乐账号登录界面](docs/media/windows-preview/account-login.png)
+
+**网络搜索**：搜索当前登录平台的曲库，查看平台返回的歌曲和可用音源。
+
+![网络曲库搜索界面](docs/media/windows-preview/network-search.png)
+
 根据酷狗公开的[用户服务协议](https://m.kugou.com/html/agreement.html)，未经合法授权使用第三方工具或服务接入其软件及相关系统受到限制。本项目没有采用这类非官方接入方式，也未集成酷狗的[官方曲库开放组件](https://open.kugou.com/docs/open-player/)，因此当前版本不提供酷狗账号登录、曲库搜索或个人歌单读取功能。维护者仅依据公开文档作出这一实现选择，未与酷狗方面沟通。更多平台边界见 [第三方平台与权利说明](PLATFORM-NOTICE.md)。
 
 操作界面截图与功能说明见 [在线音乐与平台登录](docs/WINDOWS-ONLINE-MUSIC.md)。
