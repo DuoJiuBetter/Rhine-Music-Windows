@@ -123,7 +123,7 @@ test('installed ESM-only and type-only dependencies are ready without require en
   assert.equal(await dependenciesReady(PROJECT_DIR), true)
 })
 
-test('Finder command changes cwd safely from another directory', async (t) => {
+test('Finder command changes cwd safely from another directory', { skip: process.platform === 'win32' ? 'macOS Finder /bin/bash launcher does not run on Windows' : false }, async (t) => {
   const projectDir = await fixture(t)
   await fs.mkdir(path.join(projectDir, 'scripts'))
   const command = path.join(projectDir, '启动音乐播放器.command')

@@ -13,5 +13,5 @@ document.addEventListener("dragstart", (event) => {
 if (new URLSearchParams(location.search).get("original") === "1") {
   void import("./archive-main");
 } else {
-  void import("./music-app");
+  void import("./music-app").then(() => import("./desktop")).then(({ mountDesktop }) => mountDesktop());
 }

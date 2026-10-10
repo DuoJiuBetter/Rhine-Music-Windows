@@ -2464,3 +2464,4 @@
     scrollbar-width: thin;
   }
 }
+.playback-albums .genre-stepper, .playback-albums .music-view-toggle { display: none; }

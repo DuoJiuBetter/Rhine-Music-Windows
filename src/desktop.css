@@ -1,0 +1,15 @@
+/* Controls float over the scene without a painted strip or a layout offset.
+   Only the explicit drag region and the three buttons receive pointer input. */
+.desktop-chrome { position: fixed; inset: 0 0 auto; height: 32px; z-index: 10000; pointer-events: none; user-select: none; color: #42473f; background: transparent; }
+.desktop-drag { position: absolute; inset: 0 138px 0 0; pointer-events: auto; }
+.desktop-chrome nav { position: absolute; top: 0; right: 0; display: flex; pointer-events: auto; }
+.desktop-chrome button { display: grid; place-items: center; width: 46px; height: 32px; border: 0; background: transparent; color: inherit; transition: background-color .12s, color .12s; }
+.desktop-chrome svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1; }
+.desktop-chrome button:hover { background: rgba(0,0,0,.065); }
+.desktop-chrome button:active { background: rgba(0,0,0,.12); }
+.desktop-chrome button:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
+.desktop-chrome button[data-window="close"]:hover { color: white; background: #c42b1c; }
+.desktop-chrome button[data-window="close"]:active { color: white; background: #a82116; }
+html:has(.music-app[data-theme="night"]) .desktop-chrome { color: #b5bfcc; }
+html:has(.music-app[data-theme="night"]) .desktop-chrome button:not([data-window="close"]):hover { background: rgba(255,255,255,.09); }
+.desktop-folder-button { margin: 8px 0 2px; }

@@ -1,0 +1,132 @@
+.music-panel-scrim.settings-scrim {
+  padding: 0;
+  backdrop-filter: none;
+  background: var(--page-bg);
+}
+.music-panel.settings-window {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  overflow: hidden;
+  position: relative;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-rows: 126px minmax(0, 1fr);
+  background: var(--page-bg);
+}
+.settings-window > .panel-heading {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+  padding: 58px 28px 24px;
+  background: var(--surface);
+}
+.settings-window .panel-heading small { display: none; }
+.settings-window .panel-heading h2 { margin: 0; font-size: 25px; font-weight: 600; }
+.settings-window .panel-heading > button {
+  position: absolute;
+  right: 28px;
+  top: 45px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  z-index: 1;
+}
+.settings-window .panel-heading > button:hover { background: var(--surface); color: var(--ink); }
+.settings-navigation {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 24px;
+  background: var(--surface);
+  overflow: auto;
+}
+.settings-navigation button {
+  text-align: left;
+  padding: 13px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.settings-navigation button:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.settings-navigation button[aria-current="page"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); font-weight: 600; }
+.settings-navigation button:last-child { margin-top: auto; }
+.settings-window > #panel-body {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  padding: 62px clamp(32px, 5vw, 88px) 48px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.settings-page { max-width: 860px; margin: 0 auto; }
+.settings-page[hidden] { display: none; }
+.settings-page > h2, .settings-library-heading { font-size: 23px; font-weight: 600; margin: 0 48px 30px 0; }
+.settings-page > .panel-section { margin: 0; padding: 24px 0; border-top: 1px solid var(--line); }
+.settings-page > .panel-section > h3 { font-size: 14px; margin: 0 0 16px; }
+.settings-page .settings-row { min-height: 48px; gap: 24px; margin: 0; }
+.settings-page .settings-row > span { font-size: 13px; }
+.settings-page .settings-row input[type="checkbox"] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border: 0;
+  border-radius: 20px;
+  position: relative;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--ink) 23%, transparent);
+}
+.settings-page .settings-row input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: var(--page-bg);
+}
+.settings-page .settings-row input[type="checkbox"]:checked { background: var(--accent); }
+.settings-page .settings-row input[type="checkbox"]:checked::after { left: 19px; }
+.settings-page .settings-row input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.settings-page .quality-settings { margin: 20px 0; }
+.settings-page .quality-grid { gap: 16px 24px; }
+.settings-page select, .settings-page textarea, .settings-window #music-roots { border-radius: 8px; }
+.settings-page .theme-cards button { border-radius: 12px; overflow: hidden; }
+.settings-page button:focus-visible, .settings-navigation button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.settings-page .text-button { margin-right: 16px; }
+.feedback-description { min-height: 124px; }
+.feedback-diagnostics { margin: 20px 0; }
+.feedback-diagnostics summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.settings-page .feedback-report { margin-top: 14px; height: 230px; font-family: Consolas, monospace; font-size: 11px; user-select: text; }
+.settings-page .feedback-status { min-height: 1.7em; font-size: 12px; color: var(--muted); }
+.settings-page .feedback-address { font-size: 14px; color: var(--ink); }
+.settings-page .primary-button { border-radius: 8px; }
+@media (max-width: 760px) {
+  .music-panel.settings-window { grid-template-columns: 180px minmax(0, 1fr); }
+  .settings-window > .panel-heading { padding-left: 22px; }
+  .settings-navigation { padding-inline: 10px; }
+  .settings-window > #panel-body { padding: 62px 24px 32px; }
+  .settings-page .quality-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 540px) {
+  .music-panel.settings-window { grid-template-columns: minmax(0, 1fr); grid-template-rows: 100px auto minmax(0, 1fr); }
+  .settings-window > .panel-heading { padding-top: 48px; }
+  .settings-navigation { grid-column: 1; grid-row: 2; flex-direction: row; padding: 8px 16px; }
+  .settings-navigation button { padding: 10px 12px; }
+  .settings-navigation button:last-child { margin-top: 0; }
+  .settings-window > #panel-body { grid-column: 1; grid-row: 3; padding: 24px 20px; }
+  .settings-page .settings-row { flex-wrap: wrap; gap: 12px; }
+}
+@media (forced-colors: active) {
+  .settings-page .settings-row input[type="checkbox"] { appearance: auto; }
+  .settings-page .settings-row input[type="checkbox"]::after { display: none; }
+}

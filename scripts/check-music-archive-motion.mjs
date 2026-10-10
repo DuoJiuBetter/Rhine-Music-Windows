@@ -7,7 +7,7 @@ import { MusicPlacementMotion, MusicPresentation, musicArchiveTracksSettled } fr
 import { musicOverviewColumnExtent } from '../src/music-overview-edge.ts';
 import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS } from '../src/archive-loop.ts';
 import { damp } from '../src/motion.ts';
-import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation } from '../src/data.ts';
+import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation, playlistRows } from '../src/data.ts';
 import { selectionCell, sameCell, wrap, fileAtCell, nearestOccurrence, COLUMN_SPACING, ROW_SPACING } from '../src/archive-loop.ts';
 import { MusicRealColumns } from '../src/music-real-columns.ts';
 
@@ -184,7 +184,7 @@ const sceneMethod = name => {
   return `${name}(${node.parameters.map(parameter => parameter.getText(sceneTree)).join(',')}) ${node.body.getText(sceneTree)}`;
 };
 const sceneMethodsFactory = new Function('THREE', 'musicLibrary', 'records', 'fileLocation', 'selectionCell',
-  'sameCell', 'COLUMN_SPACING', 'ROW_SPACING', transpile(`return {
+  'sameCell', 'COLUMN_SPACING', 'ROW_SPACING', 'playlistRows', transpile(`return {
     ${['select', 'switchMusicAlbum', 'cellPosition', 'musicBrowseRowForColumn'].map(sceneMethod).join(',\n')}
   };`));
 const updateMethod = sceneClass.members.find(node => ts.isMethodDeclaration(node) && node.name.getText(sceneTree) === 'update');
@@ -225,7 +225,7 @@ function navigationFixture(mode = 'filled', reduced = false, speed = 1) {
     outgoing: [], decryption: { select() {}, enter() {}, clarity: 0 }, deferSelectionPulse: true,
     clock: 0, lastInteraction: 0, targetRotation: 0, rotation: 0, returnY: null,
     get musicBrowseRow() { return (-this.rail.value - 2.17) / ROW_SPACING + 15.5; },
-    ...sceneMethodsFactory(THREE, true, records, fileLocation, selectionCell, sameCell, COLUMN_SPACING, ROW_SPACING),
+    ...sceneMethodsFactory(THREE, true, records, fileLocation, selectionCell, sameCell, COLUMN_SPACING, ROW_SPACING, playlistRows),
   };
   sceneHost.musicRealColumns.reset(counts, sceneHost.selectedCell);
   sceneHost.musicPresentation.request('archive');

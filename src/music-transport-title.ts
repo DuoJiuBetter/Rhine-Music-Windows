@@ -98,7 +98,7 @@ export function setupTransportTitle(slot: HTMLButtonElement, label: HTMLElement)
           span.textContent = glyph;
           return span;
         }));
-        slot.title = `定位歌曲：${title}`;
+        slot.title = title;
         slot.setAttribute("aria-label", `定位歌曲：${title}`);
         reconcile(wasVisible);
       }

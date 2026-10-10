@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-window-state"
+description = "Enables the desktop_window_state command without any pre-configured scope."
+commands.allow = ["desktop_window_state"]
+
+[[permission]]
+identifier = "deny-desktop-window-state"
+description = "Denies the desktop_window_state command without any pre-configured scope."
+commands.deny = ["desktop_window_state"]

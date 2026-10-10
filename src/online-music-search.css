@@ -1,0 +1,26 @@
+.search-sources { display: flex; gap: 8px; margin-bottom: 16px; }
+.search-sources button { padding: 7px 14px; border: 1px solid var(--line); font-size: 11px; }
+.search-sources button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.online-search-form { display: flex; align-items: stretch; gap: 10px; }
+.online-search-form .album-search { flex: 1; min-width: 0; width: auto; }
+.online-search-form button { flex-shrink: 0; padding: 0 16px; }
+.online-search-note, .online-search-status { font-size: 11px; line-height: 1.7; color: var(--muted); margin: 12px 0; }
+.online-search-status { min-height: 19px; }
+.online-song { position: relative; }
+.online-song .album-result { grid-template-columns: 49px 1fr 54px 14px; padding-bottom: 25px; }
+.music-app .online-source-link, .online-source-link { position: absolute; bottom: 5px; right: 0; font-size: 10px; line-height: 1.4; color: var(--muted); }
+.online-song button[aria-pressed="true"] { color: var(--accent); }
+.online-source-link:hover { color: var(--accent); }
+.online-search-pages { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.online-search-pages button { padding: 8px 12px; border: 1px solid var(--line); font-size: 11px; }
+#online-results [disabled] { opacity: .45; cursor: wait; }
+.netease-login { margin-bottom: 22px; }
+.netease-account { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.netease-account small { display: block; opacity: .65; margin-top: 7px; }
+.netease-qr { text-align: center; padding: 20px 12px 8px; }
+.netease-qr img { background: white; padding: 12px; border-radius: 12px; box-sizing: content-box; }
+.netease-qr p, .netease-auth-status { font-size: 12px; line-height: 1.8; opacity: .7; }
+
+.login-platforms { flex-wrap: wrap; }
+.platform-login-method { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; font-size: 12px; }
+.platform-login-method select { border: 1px solid var(--line); background: transparent; color: var(--ink); padding: 7px 10px; }

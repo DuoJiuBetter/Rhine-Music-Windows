@@ -32,4 +32,6 @@
 
 图标源自项目共享莱茵生命 SVG 路径，生成脚本为 `scripts/build-icons.mjs`，通过 `SHARP_MODULE` 可指定本地 Sharp 模块。修改资源后重新构建即可生成新的离线版本，无需手动修改缓存编号。
 
+Windows Perf20a Debug 恢复共享图标的圆角暖白底，外侧角落透明，保留放大的黑色标志。`icon-maskable-512.png` 文件名保留，但用途改为 `any`，不再声明可按安全区裁剪。
+
 平台说明参考：[WebKit 主屏幕 Web App](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)、[Safari 26 主屏幕安装行为](https://webkit.org/blog/17333/webkit-features-in-safari-26-0/)、[Service Worker 生命周期](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers)。

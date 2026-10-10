@@ -193,9 +193,9 @@ export class MusicBoot {
     for (const selector of [".music-counter", ".album-stepper", ".genre-stepper"])
       fade(selector, 110);
     // Keep navigation geometry stable for the title's bottom clearance. Move
-    // callout/keyhint with independent translate, preserving existing transforms.
+    // Callout uses independent translate, preserving existing transforms.
     for (const [selector, delay] of [
-      [".album-callout", 60], [".music-keyhint", 140],
+      [".album-callout", 60],
     ] as const) {
       const node = this.parent.querySelector<HTMLElement>(selector);
       if (!node) continue;

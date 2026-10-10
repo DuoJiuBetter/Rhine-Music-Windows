@@ -65,14 +65,21 @@ function fixture({ renderScene = true, firstMs = 0, reduced = false, speed = 1, 
     'requestAnimationFrame', 'cancelAnimationFrame', 'MusicFrameTiming', 'config', 'calls', 'appVersion', `
     const performance = { now: () => config.cpuNow() };
     const preferences = { reduced: config.reduced, theme: 'day' }, themeNames = { day: '暖昼' };
+    let nativeHidden = false;
+    const renderScheduler = { shouldRender: () => true, reset() {} };
+    const isDesktop = () => false, location = { search: '' };
     const stage = { dataset: {} }, getMusicMotionSpeed = () => config.speed;
     const updateOverview = () => {}, overviewRevealPending = false, overview = false;
     const overviewUI = { dispose: () => calls.dispose.overview++ };
     const showBrowseSurface = () => {}, documentDecryption = { update: time => calls.decryption.push(time) };
+    const songView = { setVisible() {}, dispose() {} };
     const pendingDetailFocus = false, pendingTrackReveal = undefined, panel = undefined;
     const pollTimer = 17, toastTimer = 18, clearTimeout = id => calls.clearTimeout.push(id);
     const loadLibrary = () => { calls.library++; };
     const player = { dispose: () => calls.dispose.player++ };
+    const onlineSearch = { dispose() {} }; let playbackVisualGeneration = 0;
+    const playlistLibrary = { dispose() {} }, playlistRenderTimer = 19;
+    let playlistPlayEpoch = 0, playlistSelectionEpoch = 0;
     const effects = { dispose: () => calls.dispose.effects++ };
     const trackFocus = { cancel: () => calls.dispose.trackFocus++ };
     let ready = config.ready;
@@ -278,6 +285,8 @@ function startupFixture({ waitAt, native = false, hidden = false } = {}) {
     const loadLibrary = force => wait(force ? 'library' : 'resume-library'), refreshAudioOutputs = () => wait('audio');
     const fit = () => {}, updateSelection = () => {}, syncSelectionMotion = () => {}, resetFrameTiming = () => {};
     const performance = { now: () => 6000 }, boot = { start: () => calls.push('boot-start') };
+    const neteaseLogin = { status: async () => {} }, effects = { setScene() {} };
+    const showBrowseSurface = () => {}, browseTransition = { hide() {} };
     const albums = [{ id: 'sample' }], stepAlbum = () => {}, mountMusicWheelNavigation = () => {};
     const requestAnimationFrame = callback => { pending.set(1, callback); return 1; }, frame = () => {};
     class ArchiveScene {
@@ -286,6 +295,7 @@ function startupFixture({ waitAt, native = false, hidden = false } = {}) {
       setQuality() { calls.push('configure-scene'); }
       async load(url, selection) { if (url !== undefined || selection !== 7) throw new Error('Selection must reach the single initial load'); await wait('model'); }
       prepareMusicRenderer() { return wait('prepare'); }
+      showMusicArchiveImmediately() { calls.push('show-archive'); }
     }
     ${productionFunction('start')}
     return { start, dispose: () => { frameDisposed = true; }, state: () => ({ ready, frameHandle }) };
@@ -306,8 +316,8 @@ for (const waitAt of ['library', 'model', 'prepare', 'audio']) {
 }
 const browserStartup = startupFixture();
 await browserStartup.start();
-assert.deepEqual(browserStartup.calls, ['library', 'construct-scene', 'model', 'configure-scene', 'prepare', 'remove-loading', 'boot-start', 'resume-library'],
-  'Browser playback loads the initial snapshot once, prepares graphics before the film, then resumes library polling without initializing native audio');
+assert.deepEqual(browserStartup.calls, ['library', 'construct-scene', 'model', 'configure-scene', 'prepare', 'remove-loading', 'show-archive', 'resume-library'],
+  'Browser playback prepares graphics, shows the archive directly, then resumes library polling without initializing native audio');
 assert.equal(browserStartup.pending.size, 1);
 const nativeStartup = startupFixture({ native: true });
 await nativeStartup.start();
@@ -339,10 +349,12 @@ function scanningStartupFixture() {
     const lightingLab = false, lightingDemo = false, location = { search: '' }, sortLabel = { column: '流派' }, renderQuality = 1;
     const stage = { dataset: {}, classList: { toggle() {}, add() {} } };
     const performance = { now: () => 6000 }, boot = { active: false, start() { this.active = true; } };
+    const neteaseLogin = { status: async () => {} }, effects = { setScene() {} };
     let frameDisposed = false, frameSuspended = false, frameHandle = 0, scene, ready = false;
     let library = { albums: [], genres: [], scan: { running: false } }, albums = [], genres = [], selected = 0;
     let libraryReceived = false, libraryStateVersion = 0, refreshing = false, apiAvailable = false, pollTimer;
-    let demo = false, overview = false, columnMemory, libraryRebuilding = false, libraryIntent;
+    let demo = false, overview = false, columnMemory, libraryRebuilding = false, libraryIntent, browseLibraryDuringPlayback = false;
+    const accountActive = false, accountView = false;
     const mode = 'archive', panel = undefined, records = [], archiveColumns = ['Genre'];
     const currentAlbum = () => albums[selected], orderMusicAlbums = items => [...items];
     const columnFiles = () => records.map((_, index) => index);
@@ -362,6 +374,7 @@ function scanningStartupFixture() {
       async load() { calls.sceneLoads++; this.columnCount = records.length; }
       async refreshLibrary() { calls.sceneRefreshes++; this.columnCount = records.length; }
       prepareMusicRenderer() { warming.resolve(); return warm.promise; }
+      showMusicArchiveImmediately() {}
     }
     ${productionFunction('albumWithoutCredits')}
     ${productionFunction('applyLibrary')}
@@ -387,8 +400,9 @@ assert.deepEqual(scanningStartup.state(), { ready: false, dataCount: 1, sceneCou
 assert.equal(scanningStartup.calls.visibleAlbumCount, 1);
 scanningStartup.warm.resolve();
 await scanningStart;
-assert.deepEqual(scanningStartup.state(), { ready: true, dataCount: 1, sceneCount: 1 });
-assert.equal(scanningStartup.timers.size, 1, 'Ready startup explicitly resumes the poll, deferred through the opening');
+for (let i = 0; i < 6; i++) await Promise.resolve();
+assert.deepEqual(scanningStartup.state(), { ready: true, dataCount: 3, sceneCount: 3 }, 'Direct archive entry resumes the completed scan only after graphics preparation');
+assert.equal(scanningStartup.timers.size, 1, 'Ready startup explicitly resumes polling after showing the archive');
 assert.equal(scanningStartup.calls.sceneLoads, 1, 'Protecting the initial snapshot does not duplicate scene loading');
 scanningStartup.finishBoot();
 await scanningStartup.loadLibrary();

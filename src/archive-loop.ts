@@ -1,4 +1,4 @@
-import { archiveColumns, columnFiles, fileLocation } from "./data.ts";
+import { archiveColumns, columnFiles, fileLocation, records, playlistRows, playlistFile } from "./data.ts";
 
 export type ArchiveCell = { lane: number; row: number };
 export type ArchiveNavigation =
@@ -30,6 +30,11 @@ export function nearestOccurrence(
 }
 
 export function fileAtCell({ lane, row }: ArchiveCell) {
+  if (playlistRows.length) return playlistFile(lane, row);
+  if (records[0]?.album?.playback) {
+    const index = (lane - 2) * MUSIC_LOOP_ROWS + row - 12;
+    return Number.isInteger(index) && index >= 0 && index < records.length ? index : -1;
+  }
   const files = columnFiles(wrap(lane, archiveColumns.length));
   return files[wrap(row - 12, files.length)] ?? -1;
 }
@@ -41,6 +46,19 @@ export function selectionCell(
 ): ArchiveCell {
   if (navigation && "cell" in navigation) return { ...navigation.cell };
   const next = fileLocation(index);
+  if (playlistRows.length) {
+    const total = Math.max(1, records[index]?.album?.playlistCell?.total || 0);
+    return {
+      lane: navigation && 'axis' in navigation && navigation.axis === 'lane'
+        ? current.lane + navigation.direction : nearestOccurrence(next.lane, current.lane, playlistRows.length),
+      row: navigation && 'axis' in navigation && navigation.axis === 'row'
+        ? current.row + navigation.direction : nearestOccurrence(next.row, current.row, total),
+    };
+  }
+  if (records[0]?.album?.playback) {
+    const row = nearestOccurrence(next.row, current.row, MUSIC_LOOP_ROWS);
+    return { row, lane: 2 + (index - (row - 12)) / MUSIC_LOOP_ROWS };
+  }
   const row = nearestOccurrence(
     next.row,
     current.row,

@@ -37,7 +37,7 @@ function environment(t) {
       this.playCalls += 1
       if (this.holdPlay) {
         this.holdPlay = false
-        return new Promise((resolve) => this.deferred.push(() => { this.begin(); resolve() }))
+        return new Promise((resolve, reject) => this.deferred.push(error => { if (error) reject(error); else { this.begin(); resolve() } }))
       }
       this.begin()
       return Promise.resolve()
@@ -48,9 +48,9 @@ function environment(t) {
       this.dispatchEvent(new Event('playing'))
     }
 
-    resolvePlay() {
+    resolvePlay(error) {
       assert.ok(this.deferred.length, 'there must be a held audio play request')
-      this.deferred.shift()()
+      this.deferred.shift()(error)
     }
 
     pause() {
@@ -110,7 +110,141 @@ const dsdTrack = (format, legacy = false) => {
 }
 const near = (actual, expected, message = `expected ${actual} ≈ ${expected}`) => assert.ok(Math.abs(actual - expected) < 0.0001, message)
 
+test('online playback resolves a fresh source and rejects stale responses after a song change', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const pending = [];
+  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
+  const first = { ...track('netease-123'), audioUrl: '', localDecodable: false, onlineSource: { provider: 'netease', id: '123' } };
+  const second = { ...track('netease-456'), audioUrl: '', localDecodable: false, onlineSource: { provider: 'netease', id: '456' } };
+  const player = new MusicPlayer({ volume: 0, bgmEnabled: false, songFadeEnabled: false });
+  const a = player.play(first.id, [first, second]); await settle();
+  const b = player.play(second.id); await settle();
+  assert.equal(pending[0].options.signal.aborted, true);
+  pending[1].resolve({ ok: true, json: async () => ({ audioUrl: 'https://m7.music.126.net/second.mp3', trial: { start: 0, end: 30 } }) });
+  await b; pending[0].resolve({ ok: true, json: async () => ({ audioUrl: 'https://m7.music.126.net/stale.mp3' }) }); await a;
+  assert.equal(player.state.currentTrack.id, second.id);
+  assert.equal(env.instances.some(audio => audio.src.includes('stale.mp3')), false);
+  assert.equal(env.instances.at(-1).src, 'https://m7.music.126.net/second.mp3');
+  assert.match(player.state.transitionWarning, /试听/);
+  player.stop(); const again = player.play(second.id); await settle();
+  assert.equal(pending.length, 3, 'each new playback refreshes expiring URLs');
+  const denied = { ok: false, json: async () => ({ error: '网易云未提供播放权限。' }) }; denied.clone = () => denied;
+  pending[2].resolve(denied); await again;
+  assert.equal(player.state.transport, 'error'); assert.equal(player.state.error, '网易云未提供播放权限。');
+  player.dispose();
+});
+
 const transitionModes = ['fade-out', 'fade-in-out', 'gapless']
+const onlineTrack = id => ({ ...track(`netease-${id}`), audioUrl: '', localDecodable: false, onlineSource: { provider: 'netease', id } });
+const sourceResponse = (status = 200, url = 'https://m7.music.126.net/synthetic.mp3') => ({
+  ok: status >= 200 && status < 300, status,
+  clone: () => sourceResponse(status, url),
+  json: async () => status === 200 ? { audioUrl: url } : { error: status === 403 ? '没有播放权限。' : '合成请求失败。' },
+});
+
+test('automatic successor retries a transient source failure without another click', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const first = onlineTrack('123'), second = onlineTrack('456'); let calls = 0, nextCalls = 0;
+  globalThis.fetch = async url => { calls++; return sourceResponse(url.endsWith('/456') && ++nextCalls === 1 ? 502 : 200); };
+  const player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  await player.play(first.id, [first, second]); finishSong(env.instances.at(-1)); await settle();
+  assert.equal(player.state.currentTrack.id, second.id);
+  assert.equal(player.state.transport, 'loading'); assert.equal(player.state.error, null);
+  await env.advance(599); assert.equal(calls, 2);
+  await env.advance(1); assert.equal(calls, 3); assert.equal(player.state.transport, 'playing');
+  player.dispose();
+});
+
+test('source retry budget stops after three retries and leaves no retry timer', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async () => { calls++; return sourceResponse(503); };
+  const song = onlineTrack('123'), player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  const pending = player.play(song.id, [song]);
+  await env.advance(5000); await pending;
+  assert.equal(calls, 4); assert.equal(player.state.transport, 'error');
+  assert.match(player.state.error, /已自动重试 3 次/); assert.equal(env.pendingTimers(), 0);
+  player.dispose();
+});
+
+test('media error and rejected play share one recovery; refreshed URLs preserve progress and a bounded budget', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async () => sourceResponse(200, `https://m7.music.126.net/synthetic-${++calls}.mp3`);
+  const song = onlineTrack('123'), player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  await player.play(song.id, [song]); await player.toggle();
+  const old = env.instances.at(-1); old.currentTime = 37; old.holdPlay = true;
+  const resume = player.play(song.id); await settle();
+  old.error = { code: 2 }; old.dispatchEvent(new Event('error'));
+  old.resolvePlay(new DOMException('synthetic media failure', 'NotSupportedError')); await resume;
+  assert.equal(player.state.error, null); assert.equal(player.state.currentTime, 37);
+  await env.advance(600);
+  const refreshed = env.instances.at(-1);
+  assert.notEqual(refreshed, old); assert.equal(calls, 2, 'Event and promise rejection schedule one new source');
+  refreshed.dispatchEvent(new Event('loadedmetadata'));
+  assert.equal(refreshed.currentTime, 37); assert.equal(player.state.transport, 'playing');
+  for (const delay of [1400, 2800]) {
+    const audio = env.instances.at(-1); audio.error = { code: 4 }; audio.dispatchEvent(new Event('error'));
+    await env.advance(delay); env.instances.at(-1).dispatchEvent(new Event('loadedmetadata'));
+    assert.equal(player.state.transport, 'playing'); assert.equal(player.state.currentTime, 37);
+  }
+  const last = env.instances.at(-1); last.error = { code: 2 }; last.dispatchEvent(new Event('error')); await settle();
+  await env.advance(5000); assert.equal(calls, 4); assert.equal(player.state.transport, 'error');
+  player.dispose();
+});
+
+for (const action of ['pause', 'stop', 'switch', 'dispose']) test(`online recovery is cancelled by ${action}`, async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async url => { calls++; if (url.endsWith('/123')) throw new TypeError('synthetic network failure'); return sourceResponse(); };
+  const first = onlineTrack('123'), second = onlineTrack('456');
+  const player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  const pending = player.play(first.id, [first, second]); await settle();
+  assert.equal(calls, 1); assert.equal(player.state.transport, 'loading');
+  if (action === 'pause') await player.toggle();
+  if (action === 'stop') player.stop();
+  if (action === 'switch') await player.play(second.id);
+  if (action === 'dispose') player.dispose();
+  await env.advance(5000); await pending;
+  assert.equal(calls, action === 'switch' ? 2 : 1, 'Cancelled backoff cannot revive the previous song');
+  assert.equal(env.pendingTimers(), 0);
+  if (action === 'pause') assert.equal(player.state.transport, 'paused');
+  if (action === 'switch') assert.equal(player.state.currentTrack.id, second.id);
+  player.dispose();
+});
+
+for (const status of [401, 403, 404]) test(`online HTTP ${status} is not retried`, async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async () => { calls++; return sourceResponse(status); };
+  const song = onlineTrack('123'), player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  await player.play(song.id, [song]); await env.advance(5000);
+  assert.equal(calls, 1); assert.equal(player.state.transport, 'error'); player.dispose();
+});
+
+test('browser gesture rejection does not refresh the platform source', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async () => { calls++; return sourceResponse(); };
+  const song = onlineTrack('123'), player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  await player.play(song.id, [song]); await player.toggle();
+  const audio = env.instances.at(-1); audio.holdPlay = true;
+  const pending = player.play(song.id); await settle(); audio.resolvePlay(new DOMException('gesture required', 'NotAllowedError')); await pending;
+  await env.advance(5000); assert.equal(calls, 1); assert.match(player.state.error, /允许播放/); player.dispose();
+});
+
+test('a delayed error on a paused online element cannot restart music', async t => {
+  const env = environment(t), originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; }); let calls = 0;
+  globalThis.fetch = async () => { calls++; return sourceResponse(); };
+  const song = onlineTrack('123'), player = new MusicPlayer({ volume: 0, bgmEnabled: false, songTransitionMode: 'fade-out' });
+  await player.play(song.id, [song]); const audio = env.instances.at(-1); await player.toggle();
+  audio.error = { code: 2 }; audio.dispatchEvent(new Event('error')); await env.advance(5000);
+  assert.equal(calls, 1); assert.equal(player.state.playing, false); player.dispose();
+});
+
 async function playSettled(env, player, id, tracks) {
   const pending = player.play(id, tracks)
   await env.advance(1000)

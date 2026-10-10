@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { MusicOverviewMotion, overviewFraming, visibleOverviewLabels } from '../src/music-overview.ts';
 import { isRealAlbumCell } from '../src/music-array-layout.ts';
 import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS, COLUMN_SPACING, ROW_SPACING } from '../src/archive-loop.ts';
-import { setMusicAlbums, archiveColumns, columnFiles, musicLibrary } from '../src/data.ts';
+import { setMusicAlbums, archiveColumns, columnFiles, musicLibrary, records, playlistRows } from '../src/data.ts';
 import { MUSIC_MODEL } from '../src/music-model.ts';
 import { musicOverviewColumnExtent } from '../src/music-overview-edge.ts';
 import { MusicRealColumns } from '../src/music-real-columns.ts';
@@ -77,8 +77,8 @@ const methodsBody = ts.transpileModule(`return {${methodNames.map(name => {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 const productionMethods = ({ music = musicLibrary } = {}) => new Function('THREE', 'archiveColumns', 'columnFiles',
-  'COLUMN_SPACING', 'ROW_SPACING', 'MUSIC_MODEL', 'musicLibrary', 'visibleCell', 'musicOverviewColumnExtent', methodsBody)(
-  THREE, archiveColumns, columnFiles, COLUMN_SPACING, ROW_SPACING, MUSIC_MODEL, music, visibleCell, musicOverviewColumnExtent);
+  'COLUMN_SPACING', 'ROW_SPACING', 'MUSIC_MODEL', 'musicLibrary', 'visibleCell', 'musicOverviewColumnExtent', 'records', 'playlistRows', methodsBody)(
+  THREE, archiveColumns, columnFiles, COLUMN_SPACING, ROW_SPACING, MUSIC_MODEL, music, visibleCell, musicOverviewColumnExtent, records, playlistRows);
 
 function projectionFixture(counts, { selectedLane = 0, browsingRow = 12, mode = 'realistic', overview = 0, width = 1280, height = 720 } = {}) {
   const genres = counts.map((_, lane) => ({ id: `g${lane}`, name: `列 ${lane}` }));

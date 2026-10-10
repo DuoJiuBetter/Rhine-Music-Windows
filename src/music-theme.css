@@ -71,6 +71,7 @@
 }
 
 .music-app {
+  color-scheme: light;
   --music-status-ink: #74786f;
   --music-night-mix: 0;
   --music-side-veil-opacity: 1;
@@ -83,11 +84,30 @@
   --music-side-veil-opacity: 0;
 }
 .music-app[data-theme="night"] {
+  color-scheme: dark;
   --music-status-ink: #e9eef2;
   --music-night-mix: 1;
 }
 .music-app[data-theme="dusk"] {
+  color-scheme: light;
   --music-status-ink: #5f7280;
+}
+
+/* Native popups inherit the active palette as well as the closed select. */
+.music-app select,
+.music-app .platform-login-method select,
+.music-app .quality-settings select {
+  color: var(--ink);
+  background-color: var(--surface);
+  border-color: var(--line);
+}
+.music-app select option,
+.music-app select optgroup {
+  color: var(--ink);
+  background-color: var(--surface);
+}
+.music-app select:focus-visible {
+  outline-color: var(--accent);
 }
 
 /* Enabled after the saved theme has painted; rapid reversals resume in place. */

@@ -1,0 +1,10 @@
+{
+  "crate": "selectors",
+  "version": "0.38.0",
+  "repository": "https://github.com/servo/stylo",
+  "revision": "572ecba2d1600e7c3d490586692a209faf703baa",
+  "files": [
+    "LICENSE-MPL-2.0"
+  ],
+  "licenseTextSource": "Unmodified standard MPL-2.0 text from locked cssparser 0.37.0; https://www.mozilla.org/MPL/2.0/"
+}

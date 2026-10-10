@@ -95,7 +95,7 @@ export class ModelViewer {
       <div class="viewer-canvas"></div>
       <div class="scene-atmosphere viewer-atmosphere" aria-hidden="true"></div>
       <header class="viewer-header">
-        <button class="viewer-back" data-viewer="close">← <span>返回档案</span><kbd>ESC</kbd></button>
+        <button class="viewer-back" data-viewer="close">← <span>返回档案</span></button>
         <div class="viewer-heading"><span>RHINE LAB / OBJECT STUDY</span><h2 id="viewer-title">档案模型</h2><p id="viewer-file"></p></div>
         <span class="viewer-index">360<span>°</span></span>
       </header>
@@ -103,7 +103,6 @@ export class ModelViewer {
       <aside class="viewer-parts" aria-label="模型装配结构"><div>ASSEMBLY / 装配结构</div>${PARTS.map((p, i) => `<p><span>${String(i + 1).padStart(2, "0")}</span><strong>${p.label}</strong><small>${p.en}</small></p>`).join("")}</aside>
       <div class="viewer-loading" role="status"><span>正在载入模型…</span><button data-viewer="retry" hidden>重新载入 ↗</button></div>
       <footer class="viewer-footer">
-        <div class="viewer-help"><span>拖动旋转</span><span>↑ ↓ ← → 平移</span><span>滚轮缩放</span></div>
         <div class="viewer-actions"><button data-viewer="explode" aria-pressed="false"><span>＋</span> 拆解档案</button><button data-viewer="assemble" aria-pressed="true"><span>−</span> 一键重组</button></div>
         <button class="viewer-reset" data-viewer="reset">复位视角 <span>↗</span></button>
       </footer>
@@ -600,11 +599,6 @@ export class ModelViewer {
     this.camera.updateProjectionMatrix();
     this.controlCamera.aspect = this.camera.aspect;
     this.controlCamera.updateProjectionMatrix();
-    const touch = matchMedia("(pointer: coarse)").matches;
-    const help = this.root.querySelector(".viewer-help")!;
-    help.innerHTML = touch
-      ? "<span>单指旋转</span><span>双指缩放 / 平移</span>"
-      : "<span>拖动旋转</span><span>↑ ↓ ← → 平移</span><span>滚轮缩放</span>";
   }
 
   update(time: number) {

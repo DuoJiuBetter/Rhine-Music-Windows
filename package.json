@@ -5,6 +5,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop.mjs",
+    "desktop:build": "tauri build --no-bundle -- --locked && node scripts/package-desktop.mjs",
+    "desktop:dev": "npm run desktop:prepare && tauri dev --no-dev-server",
+    "check:windows": "node --experimental-strip-types --test scripts/check-windows.mjs",
+    "check:gpu-budget": "node --experimental-strip-types --test scripts/check-gpu-budget.mjs",
+    "check:online": "node --experimental-strip-types --test scripts/check-netease-online.mjs scripts/check-netease-auth.mjs scripts/check-playback-albums.mjs scripts/check-netease-playlists.mjs && node scripts/check-online-ui.mjs",
+    "check:playback": "node scripts/check-playback-ui.mjs",
+    "check:online:live": "node scripts/check-online-desktop.mjs",
+    "check:platforms": "node --test scripts/check-platforms.mjs scripts/check-qq-login-session.mjs scripts/check-bodian.mjs",
+    "benchmark:windows": "node scripts/benchmark-windows.mjs",
     "predev": "node scripts/export-records.mjs",
     "dev": "vite --host 127.0.0.1",
     "prebuild": "node scripts/export-records.mjs",
@@ -24,6 +34,7 @@
     "check:audio": "node --test scripts/check-music-audio.mjs scripts/check-dsd-fixtures.mjs scripts/check-music-gapless.mjs && node --experimental-strip-types --test scripts/check-music-player.mjs scripts/check-music-browser-gapless.mjs && node scripts/check-music-song-transition-ui.mjs",
     "check:audio:browser-render": "node scripts/check-music-gapless-offline.mjs",
     "check:overview": "node scripts/check-music-overview.mjs && node scripts/check-music-overview-ui.mjs",
+    "check:song-info": "node --experimental-strip-types --test scripts/check-music-song-info.mjs",
     "check:cover": "node scripts/check-music-cover.mjs",
     "check:v040": "npm run check:v041",
     "check:startup": "node scripts/check-music-startup.mjs && node scripts/check-music-renderer-startup.mjs && node scripts/check-quality.mjs",
@@ -31,12 +42,17 @@
   },
   "dependencies": {
     "@kitlangton/rolling-number": "0.4.1",
+    "@tauri-apps/api": "2.12.1",
     "music-metadata": "^11.15.0",
+    "NeteaseCloudMusicApi": "4.32.0",
     "opencc-js": "^1.4.2",
-    "three": "^0.183.0"
+    "three": "^0.183.0",
+    "undici": "7.28.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
     "@types/three": "^0.183.0",
+    "playwright": "1.64.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"

@@ -51,7 +51,7 @@ function fixture(saved) {
     select: (...args) => calls.scene.push(args), switchMusicAlbum: (...args) => calls.scene.push(args),
     musicColumnCell(lane, row) { calls.cells.push([lane, row]); return { lane: lane + 6, row }; },
   };
-  const buttons = ['prev', 'next', 'prev', 'next'].map(action => ({ dataset: { action }, disabled: false }));
+  const buttons = ['prev', 'next', 'prev', 'next'].map(action => ({ dataset: { action }, disabled: false, setAttribute() {}, closest() { return null; } }));
   const stage = { dataset: {}, querySelectorAll: () => buttons };
   const code = `
     ${variable('read')}
@@ -59,6 +59,7 @@ function fixture(saved) {
     ${variable('preferences')}
     ${normalize.getText(tree)}
     let selected = 0, libraryRebuilding = false, libraryIntent;
+    const $ = () => ({ innerHTML: '' }), sortLabel = { column: '流派' }, accountView = false;
     const ready = true, boot = { active: false }, columnMemory = new Map();
     const presentation = { openingOrDetail: false, pendingSelection: undefined, queue: false,
       back() { this.pendingSelection = undefined; },

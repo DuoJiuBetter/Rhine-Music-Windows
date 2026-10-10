@@ -2,17 +2,26 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { createArchiveLighting, type LightingLook } from "./archive-lighting";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import type { Pass } from "three/addons/postprocessing/Pass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { GlassVisibilityRenderPass, type GlassOcclusionMode } from "./glass-visibility-pass";
 import { SSAOPass } from "three/addons/postprocessing/SSAOPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
+import { SharedDepthBokehPass } from "./shared-depth-bokeh";
+import { BudgetSSAOPass } from "./budget-ssao";
+import { CoverClarityPass, CoverClarityState } from "./cover-clarity-pass";
+import { SceneInstanceBudget } from "./scene-instance-budget";
+import { ShadowUpdateBudget } from "./shadow-update-budget";
+import { GpuFrameTiming } from "./gpu-frame-timing";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import { normalizeQuality, type RenderQuality } from "./render-quality";
-import { applyTextureQuality, resizeQuality } from "./quality-renderer";
+import { applyTextureQuality, resizeQuality, graphicsIdentity } from "./quality-renderer";
 import { CardAppearance } from "./appearance";
 import { configureInternalOptics } from "./internal-optics";
 import { DecryptionController } from "./decryption";
-import { archiveColumns, columnFiles, fileAtSlot, fileLocation, musicLibrary, records, slotStride } from "./data";
+import { archiveColumns, columnFiles, fileAtSlot, fileLocation, musicLibrary, records, slotStride, playlistRows } from "./data";
+import type { ArchiveRecord } from './data';
 import { CoverAtlas } from "./cover-atlas";
 import { MusicSelectionLighting } from "./music-lighting";
 import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from "./music-camera";
@@ -20,7 +29,7 @@ import { MusicArchiveMotion } from "./music-archive-motion";
 import { MusicRealColumns } from "./music-real-columns";
 import { musicOverviewColumnExtent, MUSIC_OVERVIEW_PICK_EXTENT } from "./music-overview-edge";
 import { MUSIC_CD_ASSET } from "./music-cd-asset";
-import { MUSIC_MODEL, configureMusicGlass, musicAssemblyPart, normalizeMusicGeometry } from "./music-model";
+import { MUSIC_MODEL, MUSIC_COVER, configureMusicGlass, musicAssemblyPart, normalizeMusicGeometry } from "./music-model";
 import {
   cellKey,
   sameCell,
@@ -78,15 +87,34 @@ export class ArchiveScene {
   // All visible foreground geometry is beyond 5; retain the framing and lens.
   readonly camera = new THREE.PerspectiveCamera(34, 16 / 9, 5, 300);
   private composer: EffectComposer;
+  private glassVisibility?: GlassVisibilityRenderPass;
   private ao: SSAOPass;
   private bokeh: BokehPass;
+  private coverClarity?: CoverClarityPass;
+  private coverClarityState = new CoverClarityState();
+  private gpuTiming?: GpuFrameTiming;
+  private profiledPasses = new WeakSet<Pass>();
+  private graphicsDevice: ReturnType<typeof graphicsIdentity>;
+  private coverPrefetchAt = 0;
+  private optimize = new URLSearchParams(location.search).get("render") !== "reference";
   private instances: THREE.InstancedMesh[] = [];
+  private instanceBudget?: SceneInstanceBudget;
+  private arrayPicking?: THREE.InstancedMesh;
+  private shadowArray?: THREE.InstancedMesh;
+  private shadowBudget = new ShadowUpdateBudget();
+  private shadowState: number[] = [];
+  private coverSlots: number[] = [];
+  private coverPriority: number[] = [];
+  private coverEligible = new Uint8Array(0);
+  private restoreSlots: number[] = [];
+  private compactMatrix = new THREE.Matrix4();
   private model = new THREE.Group();
   private appearance = new CardAppearance();
   private decryption = new DecryptionController();
   private cursor = new THREE.Vector2();
   private raycaster = new THREE.Raycaster();
   private dummy = new THREE.Object3D();
+  private playlistGrid = false;
   private columnExtentOffset = new THREE.Vector3();
   private positions: THREE.Vector3[] = [];
   private poolRows = LOOP_ROWS;
@@ -160,7 +188,7 @@ export class ArchiveScene {
   private aoKernelSize = 32;
   private displayHeight = 0;
   private layoutKind = "";
-  onSelect?: (index: number, cell?: ArchiveCell) => void;
+  onSelect?: (index: number, cell?: ArchiveCell, selectedModel?: boolean) => void;
   onHover?: (index: number | null) => void;
   onNavigate?: (axis: "row" | "lane", direction: number) => void;
   constructor(
@@ -180,6 +208,8 @@ export class ArchiveScene {
     );
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.info.autoReset = false;
+    this.gpuTiming = new GpuFrameTiming(this.renderer.getContext() as WebGL2RenderingContext);
+    this.graphicsDevice = graphicsIdentity(this.renderer);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -228,8 +258,16 @@ export class ArchiveScene {
     this.camera.fov = 6.15;
     this.camera.lookAt(this.cameraAim);
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.ao = new SSAOPass(
+    if (musicLibrary && this.optimize) {
+      // Independent depth textures permit optional diagnostic snapshots. The
+      // normal optimization reuses the actual main buffer's hardware depth.
+      for (const target of [this.composer.renderTarget1, this.composer.renderTarget2])
+        target.depthTexture = new THREE.DepthTexture(target.width, target.height, THREE.UnsignedIntType);
+      this.glassVisibility = new GlassVisibilityRenderPass(this.scene, this.camera);
+      this.glassVisibility.measure = (label, draw) => this.gpuTiming ? this.gpuTiming.measure(label, draw) : draw();
+      this.composer.addPass(this.glassVisibility);
+    } else this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.ao = new (musicLibrary && this.optimize ? BudgetSSAOPass : SSAOPass)(
       this.scene,
       this.camera,
       container.clientWidth,
@@ -239,16 +277,51 @@ export class ArchiveScene {
     this.ao.minDistance = 0.001;
     this.ao.maxDistance = 0.09;
     this.composer.addPass(this.ao);
-    this.bokeh = new BokehPass(this.scene, this.camera, {
+    this.bokeh = new (this.optimize ? SharedDepthBokehPass : BokehPass)(this.scene, this.camera, {
       focus: 25,
       aperture: 0.0018,
       maxblur: 0.011,
     });
+    if (this.bokeh instanceof SharedDepthBokehPass) this.bokeh.depthSource = () =>
+      this.ao.enabled && (this.ao instanceof BudgetSSAOPass || this.quality.aoResolution === 1)
+        ? this.ao.normalRenderTarget.depthTexture : null;
     this.composer.addPass(this.bokeh);
     this.smaa.enabled = false;
     this.composer.addPass(this.smaa);
     this.composer.addPass(new OutputPass());
+    if (musicLibrary && this.optimize) {
+      this.coverClarity = new CoverClarityPass(this.scene, this.camera, this.coverClarityState);
+      this.coverClarity.depthSource = () => {
+        if (this.ao.enabled && this.ao.normalRenderTarget.depthTexture)
+          return { texture: this.ao.normalRenderTarget.depthTexture, packed: false };
+        if (this.bokeh.enabled)
+          return { texture: (this.bokeh.uniforms as Record<string, THREE.IUniform>).tDepth.value as THREE.Texture, packed: true };
+        return null;
+      };
+      this.composer.addPass(this.coverClarity);
+    }
+    this.profilePasses();
     this.bindPointer();
+  }
+  private profilePasses() {
+    for (const pass of this.composer.passes) {
+      if (this.profiledPasses.has(pass)) continue;
+      this.profiledPasses.add(pass);
+      // The visibility pass measures depth and physical color separately;
+      // wrapping it again would nest TIME_ELAPSED queries.
+      if (pass instanceof GlassVisibilityRenderPass) continue;
+      const name = pass instanceof RenderPass ? "sceneWithShadowsAndTransmission" :
+        pass instanceof SSAOPass ? "aoWithNormalsAndDepth" :
+        pass instanceof BokehPass ? "depthOfField" :
+        pass instanceof SMAAPass ? "antialias" :
+        pass instanceof CoverClarityPass ? "nativeClearCovers" : "output";
+      const render = pass.render;
+      pass.render = (...args: Parameters<Pass["render"]>) => {
+        const draw = () => render.call(pass, ...args);
+        if (this.gpuTiming) this.gpuTiming.measure(name, draw);
+        else draw();
+      };
+    }
   }
   async load(assetUrl = publicAsset(musicLibrary ? MUSIC_CD_ASSET : "assets/archive-cassette.glb"), selectedIndex = 0) {
     if (!musicLibrary) {
@@ -266,6 +339,11 @@ export class ArchiveScene {
     });
     this.poolRows = musicLibrary ? MUSIC_LOOP_ROWS : LOOP_ROWS;
     const count = LOOP_COLUMNS * this.poolRows;
+    if (musicLibrary && this.optimize) {
+      this.instanceBudget = new SceneInstanceBudget(count);
+      this.coverEligible = new Uint8Array(count);
+      this.restoreSlots = Array.from({ length: count }, (_, index) => index);
+    }
     for (let index = 0; index < count; index++) {
       const cell = poolCell(index, this.poolRows);
       this.cells.push(cell);
@@ -399,13 +477,45 @@ export class ArchiveScene {
       this.appearance.register(name, mat, arrayMat);
       const inst = new THREE.InstancedMesh(geom, arrayMat, count);
       inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      // Every shell part receives the same transforms. Share one GPU buffer;
+      // the reference path retains separate buffers for A/B measurements.
+      if (this.optimize && this.instances.length) inst.instanceMatrix = this.instances[0].instanceMatrix;
       inst.castShadow = name === "Optical_Diffuser";
       inst.receiveShadow = true;
       inst.frustumCulled = false;
+      inst.userData.fullInstanceMatrix = inst.instanceMatrix;
+      inst.userData.originalCastShadow = inst.castShadow;
+      inst.userData.surface = name;
+      // All visible shelf cards use this original physical material. Visibility
+      // compaction below changes instance submission, never the glass shader.
       this.instances.push(inst);
       this.scene.add(inst);
     }
-    this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting);
+    if (this.instanceBudget && this.instances[0]) {
+      this.arrayPicking = new THREE.InstancedMesh(this.instances[0].geometry, this.instances[0].material, count);
+      this.arrayPicking.instanceMatrix = this.instanceBudget.visibleMatrices;
+      const caster = this.instances.find((mesh) => mesh.userData.originalCastShadow);
+      if (caster) {
+        // The soft shelf shadow needs the case outline, not every rounded bevel
+        // and internal tray triangle. Selected/outgoing cases retain real geometry.
+        caster.geometry.computeBoundingBox();
+        const bounds = caster.geometry.boundingBox!;
+        const extent = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3());
+        const proxy = new THREE.BoxGeometry(extent.x, extent.y, Math.max(0.001, extent.z)).translate(center.x, center.y, center.z);
+        this.shadowArray = new THREE.InstancedMesh(proxy, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: (caster.material as THREE.Material).side }), count);
+        this.shadowArray.name = "Unclipped shelf shadow casters";
+        this.shadowArray.instanceMatrix = this.instanceBudget.shadowMatrices;
+        this.shadowArray.frustumCulled = false; this.shadowArray.castShadow = true;
+        // Public shadow hooks submit this independent list only to shadow maps.
+        // Color/AO passes see count 0, with no proxy geometry drawn into them.
+        this.shadowArray.count = 0;
+        this.shadowArray.onBeforeShadow = () => { this.shadowArray!.count = this.instanceBudget!.enabled ? this.instanceBudget!.shadowSlots.length : 0; };
+        this.shadowArray.onAfterShadow = () => { this.shadowArray!.count = 0; };
+        this.scene.add(this.shadowArray);
+      }
+    }
+    this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting,
+      256, this.coverClarity ? this.coverClarityState : undefined);
     this.scene.add(this.covers.array);
     this.model.add(this.covers.selected);
     if (!musicLibrary) {
@@ -440,9 +550,19 @@ export class ArchiveScene {
   }
 
   /** Call after setMusicAlbums; reuse the allocated display pool and cover atlas. */
-  async refreshLibrary(selectedIndex = 0) {
+  async refreshLibrary(selectedIndex = 0, preserveCovers = false) {
     if (!this.loaded || !this.covers) return;
     this.musicColumnCounts = archiveColumns.map((_, lane) => columnFiles(lane).length);
+    if (preserveCovers && playlistRows.length && this.playlistGrid) {
+      const location = fileLocation(selectedIndex);
+      this.selectedSlot = location.slot; this.selectedCell = selectionCell(selectedIndex, this.selectedCell);
+      this.covers.selected.visible = !!records[selectedIndex]?.album?.tracks.length;
+      // The existing print remains usable while a sharper cover decodes.
+      // Do not hold playlist navigation behind that asynchronous image work.
+      void this.covers.select(records[selectedIndex]); return;
+    }
+    this.playlistGrid = playlistRows.length > 0;
+    this.instanceBudget?.reset(); this.shadowBudget.invalidate();
     this.musicPresentation.request("hidden");
     this.musicCamera = new MusicCameraMotion();
     this.musicPlacement = new MusicPlacementMotion();
@@ -451,18 +571,20 @@ export class ArchiveScene {
     this.targetDetail = this.detail = 0;
     for (const old of this.outgoing) { this.scene.remove(old.group); this.appearance.dispose(old.group); }
     this.outgoing = [];
-    this.covers.reset();
+    if (!preserveCovers) this.covers.reset();
     this.covers.array.visible = musicLibrary && records.length > 0;
     this.covers.selected.visible = musicLibrary && records.length > 0;
-    this.model.visible = records.length > 0;
-    for (const inst of this.instances) inst.visible = records.length > 0;
+    if (playlistRows.length) this.covers.selected.visible = !!records[selectedIndex]?.album?.tracks.length;
+    // An empty library retains the authored glass array without album prints.
+    this.model.visible = true;
+    for (const inst of this.instances) inst.visible = true;
     for (const child of this.model.children) {
       // Music uses only the shared thin shell and its independent surface print.
       if (child.userData.surface) child.visible = !musicLibrary || child.userData.surface !== "Printed_Label";
       if (child.userData.printedLabel) child.visible = !musicLibrary;
     }
     const index = Math.max(0, Math.min(records.length - 1, selectedIndex));
-    const location = fileLocation(index);
+    const location = records.length ? fileLocation(index) : { lane: 2, row: 12, slot: 2 * slotStride + 12 };
     this.selectedSlot = location.slot;
     this.selectedCell = { lane: location.lane, row: location.row };
     this.musicRealColumns.reset(this.musicColumnCounts, this.selectedCell);
@@ -496,7 +618,8 @@ export class ArchiveScene {
     this.ao.maxDistance = 0.035;
     // SSAO assumes opaque solids. Thin transmitting cases need only a soft
     // contact cue: bound the darkest AO multiplier to 0.78, not solid black.
-    this.ao.copyMaterial.fragmentShader = this.ao.copyMaterial.fragmentShader.replace(
+    if (this.ao instanceof BudgetSSAOPass) this.ao.setContactStrength(0.22);
+    else this.ao.copyMaterial.fragmentShader = this.ao.copyMaterial.fragmentShader.replace(
       "gl_FragColor = opacity * texel;",
       "gl_FragColor = vec4(mix(vec3(1.0), texel.rgb, 0.22), texel.a);",
     );
@@ -716,6 +839,9 @@ export class ArchiveScene {
     this.selectionLighting?.resetRowMotion();
   }
   private actualCell(cell: ArchiveCell) {
+    if (playlistRows.length) return fileAtCell(cell) >= 0;
+    if (musicLibrary && !records.length) return false;
+    if (records[0]?.album?.playback) return fileAtCell(cell) >= 0;
     return !musicLibrary || this.musicArrayMode === "filled" ||
       isRealAlbumCell(cell.lane, cell.row, this.musicColumnCounts);
   }
@@ -738,6 +864,7 @@ export class ArchiveScene {
   get musicOverviewProgress() { return this.musicOverview.value; }
   /** Actual displayed depth, including while a previous selection is moving. */
   get musicBrowseRow() { return (-this.rail.value - 2.17) / ROW_SPACING + 15.5; }
+  get musicSelectionCell() { return { ...this.selectedCell }; }
 
   /** The target shelf's own displayed depth; inactive real shelves stay centered. */
   musicBrowseRowForColumn(lane: number) {
@@ -749,12 +876,12 @@ export class ArchiveScene {
   musicColumnCell(lane: number, row: number): ArchiveCell {
     const centerLane = this.columnCamera.value / COLUMN_SPACING + 2;
     return { lane: this.musicArrayMode === "filled"
-      ? lane + Math.round((centerLane - lane) / archiveColumns.length) * archiveColumns.length
+      ? lane + Math.round((centerLane - lane) / (playlistRows.length || archiveColumns.length)) * (playlistRows.length || archiveColumns.length)
       : lane, row };
   }
 
   private musicColumnRowOffset(lane: number) {
-    if (!musicLibrary || this.musicArrayMode !== "realistic") return 0;
+    if (!musicLibrary || !records.length || playlistRows.length || this.musicArrayMode !== "realistic") return 0;
     return this.musicBrowseRow - this.musicRealColumns.row(lane, this.musicOverview.value);
   }
 
@@ -789,15 +916,18 @@ export class ArchiveScene {
     if (!this.loaded || !archiveColumns.length) return [];
     const width = this.container.clientWidth, height = this.container.clientHeight;
     const centerLane = this.columnCamera.value / COLUMN_SPACING + 2;
-    const selectedLane = ((this.selectedCell.lane % archiveColumns.length) + archiveColumns.length) % archiveColumns.length;
+    const period = playlistRows.length || archiveColumns.length, origin = playlistRows.length ? 2 : 0;
+    const selectedLane = ((this.selectedCell.lane - origin) % period + period) % period + origin;
     return archiveColumns.flatMap((name, lane) => {
       const physical = this.musicArrayMode === "realistic" ? lane :
-        lane + Math.round((centerLane - lane) / archiveColumns.length) * archiveColumns.length;
+        lane + Math.round((centerLane - lane) / period) * period;
       // Keep projecting through the full edge envelope so retiring labels
       // follow their columns until both reach zero at the pool's recycle line.
       if (Math.abs(physical - centerLane) > 4.5) return [];
-      const count = columnFiles(lane).length;
-      if (!count) return [];
+      const files = columnFiles(lane);
+      if (!files.length) return [];
+      const playlist = records[files[0]]?.album?.playlistCell;
+      const count = playlist ? playlist.total : files.length;
       const browsingRow = (-this.rail.value - 2.17) / ROW_SPACING + 15.5;
       const rowOffset = this.musicColumnRowOffset(lane);
       const anchorRow = this.musicArrayMode === "realistic" ?
@@ -809,7 +939,7 @@ export class ArchiveScene {
         -4.6 + MUSIC_MODEL.center.y - MUSIC_MODEL.height / 2 + (MUSIC_MODEL.height + .65) * extent,
         anchorZ).project(this.camera);
       if (point.z < -1 || point.z > 1) return [];
-      return [{ lane, name, count, extent,
+      return [{ lane, name, count, extent, playlist: Boolean(playlist), position: playlist ? lane - 1 : lane + 1,
         x: (point.x + 1) * width / 2, y: (1 - point.y) * height / 2, selected: lane === selectedLane }];
     });
   }
@@ -878,6 +1008,9 @@ export class ArchiveScene {
       this.reduced = reduced;
     }
   }
+  setGlassOcclusion(mode: GlassOcclusionMode) {
+    this.glassVisibility?.setMode(mode);
+  }
   setQuality(value: RenderQuality | boolean) {
     if (this.disposed) return;
     const quality =
@@ -890,19 +1023,22 @@ export class ArchiveScene {
     this.quality = quality;
     if (quality.aoSamples && quality.aoSamples !== this.aoKernelSize) {
       const old = this.ao;
-      this.ao = new SSAOPass(this.scene, this.camera, 1, 1, quality.aoSamples);
+      this.ao = new (musicLibrary && this.optimize ? BudgetSSAOPass : SSAOPass)(this.scene, this.camera, 1, 1, quality.aoSamples);
       this.ao.kernelRadius = old.kernelRadius;
       this.ao.minDistance = old.minDistance;
       this.ao.maxDistance = old.maxDistance;
       const index = this.composer.passes.indexOf(old);
       this.composer.removePass(old);
       this.composer.insertPass(this.ao, index);
+      this.profilePasses();
       old.dispose();
       this.aoKernelSize = quality.aoSamples;
       if (this.selectionLighting) this.softenMusicContactShadows();
     }
     this.ao.enabled = quality.aoSamples > 0;
+    if (this.ao instanceof BudgetSSAOPass) this.ao.setSamplingScale(quality.aoResolution);
     this.bokeh.enabled = quality.depthOfField > 0;
+    if (this.bokeh instanceof SharedDepthBokehPass) this.bokeh.setResolutionScale(quality.depthOfFieldResolution);
     this.smaa.enabled = quality.antialias === "smaa";
     this.renderer.shadowMap.enabled = quality.shadows > 0;
     const size = Math.min(
@@ -915,6 +1051,7 @@ export class ArchiveScene {
       this.light.shadow.mapSize.set(size, size);
     }
     this.light.shadow.needsUpdate = true;
+    this.shadowBudget.invalidate();
     applyTextureQuality(this.scene, this.renderer, quality);
     this.resize();
   }
@@ -926,6 +1063,8 @@ export class ArchiveScene {
     );
   }
   private rebaseCoordinates() {
+    if (playlistRows.length) return;
+    if (records[0]?.album?.playback) return;
     if (musicLibrary && this.musicArrayMode === "realistic") return;
     // Periodically reduce the logical coordinates while preserving every
     // relative position, spring velocity, ripple and idle phase.
@@ -1072,7 +1211,10 @@ export class ArchiveScene {
     } else this.emitPulse(cell);
     this.targetRotation = 0;
     if (!musicLibrary) this.drawLabel(index);
-    if (musicLibrary) void this.covers?.select(records[index]);
+    if (musicLibrary) {
+      if (playlistRows.length && this.covers) this.covers.selected.visible = !!records[index]?.album?.tracks.length;
+      void this.covers?.select(records[index]);
+    }
   }
   private emitPulse(cell: ArchiveCell) {
     this.pulses.push({ ...cell, time: this.clock });
@@ -1119,13 +1261,16 @@ export class ArchiveScene {
     }
     this.displayHeight = displayHeight;
     this.layoutKind = kind;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
     const dimensions = resizeQuality(
       this.renderer,
       this.composer,
       this.container,
       this.quality,
+      Boolean(this.coverClarity),
     );
-    this.ao.setSize(
+    if (!(this.ao instanceof BudgetSSAOPass)) this.ao.setSize(
       Math.max(1, Math.floor(dimensions.width * this.quality.aoResolution)),
       Math.max(1, Math.floor(dimensions.height * this.quality.aoResolution)),
     );
@@ -1134,13 +1279,14 @@ export class ArchiveScene {
       aoSamples: this.ao.enabled ? this.aoKernelSize : 0,
       aoWidth: this.ao.width,
       aoHeight: this.ao.height,
+      depthWidth: this.ao.normalRenderTarget.width,
+      depthHeight: this.ao.normalRenderTarget.height,
+      depthOfFieldResolution: this.bokeh instanceof SharedDepthBokehPass ? this.bokeh.getBudget() : { scale: 1 },
       shadows: this.renderer.shadowMap.enabled
         ? this.light.shadow.mapSize.x
         : 0,
       depthOfField: this.bokeh.enabled ? this.quality.depthOfField : 0,
     });
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
   }
   private bindPointer() {
     const canvas = this.renderer.domElement;
@@ -1193,14 +1339,14 @@ export class ArchiveScene {
       );
       this.raycaster.setFromCamera(this.cursor, this.camera);
       const hit = this.raycaster.intersectObjects(
-        [this.instances[0], this.model],
+        [this.instanceBudget?.enabled ? this.arrayPicking! : this.instances[0], this.model],
         true,
-      ).find((hit) => this.pickableCell(hit.instanceId === undefined ? this.selectedCell : this.cells[hit.instanceId]));
+      ).find((hit) => this.pickableCell(this.cellForHit(hit.instanceId)));
       canvas.style.cursor = hit ? "pointer" : "default";
       this.onHover?.(
         hit
           ? hit.instanceId !== undefined
-            ? fileAtCell(this.cells[hit.instanceId])
+            ? fileAtCell(this.cellForHit(hit.instanceId))
             : fileAtSlot(this.selectedSlot)
           : null,
       );
@@ -1230,17 +1376,18 @@ export class ArchiveScene {
       );
       this.raycaster.setFromCamera(this.cursor, this.camera);
       const hit = this.raycaster.intersectObjects(
-        [this.instances[0], this.model],
+        [this.instanceBudget?.enabled ? this.arrayPicking! : this.instances[0], this.model],
         true,
-      ).find((hit) => this.pickableCell(hit.instanceId === undefined ? this.selectedCell : this.cells[hit.instanceId]));
+      ).find((hit) => this.pickableCell(this.cellForHit(hit.instanceId)));
       if (hit)
         this.onSelect?.(
           hit.instanceId !== undefined
-            ? fileAtCell(this.cells[hit.instanceId])
+            ? fileAtCell(this.cellForHit(hit.instanceId))
             : fileAtSlot(this.selectedSlot),
           hit.instanceId !== undefined
-            ? { ...this.cells[hit.instanceId] }
+            ? { ...this.cellForHit(hit.instanceId) }
             : { ...this.selectedCell },
+          hit.instanceId === undefined,
         );
     });
     canvas.addEventListener("pointercancel", (e) => {
@@ -1256,6 +1403,88 @@ export class ArchiveScene {
       this.onHover?.(null);
     });
   }
+  private cellForHit(instanceId?: number): ArchiveCell {
+    if (instanceId === undefined) return this.selectedCell;
+    const slot = this.instanceBudget?.enabled ? this.instanceBudget.visibleSlots[instanceId] : instanceId;
+    return this.cells[slot];
+  }
+
+  private applyInstanceBudget(dt: number, focus: number, aperture: number, maxBlur: number) {
+    const budget = this.instanceBudget;
+    if (!budget?.enabled) return;
+    // Shadow lists use the light's volume, independently of the view volume.
+    this.scene.updateMatrixWorld(true);
+    this.light.shadow.updateMatrices(this.light);
+    budget.update(this.camera, this.light.shadow.getFrustum(), focus, aperture, maxBlur,
+      this.ao.normalRenderTarget.width, dt, this.musicRenderTransitioning);
+    for (const inst of this.instances) {
+      inst.instanceMatrix = budget.visibleMatrices;
+      inst.count = budget.visibleSlots.length;
+      inst.castShadow = false;
+    }
+    if (this.arrayPicking) {
+      this.arrayPicking.count = budget.visibleSlots.length;
+      this.arrayPicking.boundingSphere = null;
+    }
+    if (this.covers) {
+      this.coverSlots.length = 0;
+      for (const slot of budget.visibleSlots) if (this.coverEligible[slot]) this.coverSlots.push(slot);
+      this.covers.setVisibleSlots(this.coverSlots);
+      for (let i = 0; i < this.coverSlots.length; i++) {
+        this.compactMatrix.fromArray(budget.pool, this.coverSlots[i] * 16);
+        this.covers.array.setMatrixAt(i, this.compactMatrix);
+      }
+      this.covers.array.instanceMatrix.clearUpdateRanges();
+      if (this.coverSlots.length) {
+        this.covers.array.instanceMatrix.addUpdateRange(0, this.coverSlots.length * 16);
+        this.covers.array.instanceMatrix.needsUpdate = true;
+      }
+      this.coverPriority.length = 0;
+      for (const slot of budget.prioritySlots) if (this.coverEligible[slot]) this.coverPriority.push(slot);
+      const requests = this.coverPriority
+        .map((slot) => ({ slot, record: records[fileAtCell(this.cells[slot])] }));
+      const moving = this.musicRenderTransitioning;
+      const now = performance.now();
+      if (now >= this.coverPrefetchAt) {
+        this.coverPrefetchAt = now + 250;
+        const current = records[fileAtCell(this.selectedCell)];
+        // Neighbouring songs and playlists are prepared before their lift;
+        // visible requests follow in the existing focus order.
+        const ahead = [current];
+        for (const [lane, row] of [[0, -1], [0, 1], [-1, 0], [1, 0]])
+          ahead.push(records[fileAtCell({ lane: this.selectedCell.lane + lane, row: this.selectedCell.row + row })]);
+        this.covers.prefetch([...ahead, ...requests.map(request => request.record)], 3);
+      }
+      this.covers.prepareFrame(requests, moving ? 2 : 6, moving ? 1 : 2);
+    }
+  }
+
+  private updateBudgetShadows() {
+    const budget = this.instanceBudget;
+    if (!budget?.enabled || !this.renderer.shadowMap.enabled) return;
+    const state = this.shadowState;
+    state.length = 0;
+    // Encode topology and world-space basis displacement as well as translation.
+    for (const slot of budget.shadowSlots) {
+      state.push(slot * 10);
+      const offset = slot * 16;
+      for (let i = 0; i < 16; i++) state.push(budget.pool[offset + i] * (i < 12 ? 3 : 1));
+    }
+    for (const group of [this.model, ...this.outgoing.map((item) => item.group)]) {
+      group.updateMatrixWorld(true);
+      state.push(group.id, Number(group.visible));
+      for (let i = 0; i < 16; i++) state.push(group.matrixWorld.elements[i] * (i < 12 ? 3 : 1));
+    }
+    state.push(...this.light.matrixWorld.elements, ...this.light.target.matrixWorld.elements,
+      ...this.light.shadow.camera.projectionMatrix.elements, this.light.shadow.mapSize.x, this.light.shadow.mapSize.y);
+    if (this.light.shadow.needsUpdate) this.shadowBudget.invalidate();
+    const camera = this.light.shadow.camera;
+    const texel = Math.min((camera.right - camera.left) / this.light.shadow.mapSize.x,
+      (camera.top - camera.bottom) / this.light.shadow.mapSize.y);
+    this.renderer.shadowMap.needsUpdate = this.shadowBudget.shouldUpdate(state,
+      this.musicRenderTransitioning, Math.min(0.025, texel), this.last);
+  }
+
   update(
     time: number,
     cinematic?: { reveal: number; lift: number; zoom: number; time: number; musicIntro?: boolean },
@@ -1501,6 +1730,7 @@ export class ArchiveScene {
       ? musicIntro ? 0 : musicLibrary ? musicCinematicPose(shot).detail : cinematic.zoom
       : musicLibrary ? presentationProgress : THREE.MathUtils.lerp(this.detail, cameraTarget, blend);
     const detail = this.detail;
+    this.coverClarityState.inspection.value = musicLibrary ? ease(detail) : 0;
     this.decryption.update(dt, detail > .78 && this.lift.value > 3.3, this.reduced,
       cinematic ? shot + 5 : undefined);
     this.appearance.apply(this.model, ease(this.lift.value / 0.4));
@@ -1570,6 +1800,21 @@ export class ArchiveScene {
     // a missing file for one frame at the ownership handoff.
     const hidden = new Set(this.outgoing.map((o) => cellKey(o.cell)));
     hidden.add(cellKey(this.selectedCell));
+    const adaptive = Boolean(this.instanceBudget && this.quality.arrayBudget && !cinematic);
+    if (this.instanceBudget && this.instanceBudget.enabled !== adaptive) {
+      this.instanceBudget.enabled = adaptive;
+      this.instanceBudget.reset(); this.shadowBudget.invalidate();
+      if (!adaptive) {
+        for (const inst of this.instances) {
+          inst.instanceMatrix = inst.userData.fullInstanceMatrix;
+          inst.count = this.positions.length;
+          inst.castShadow = Boolean(inst.userData.originalCastShadow);
+          inst.boundingSphere = null;
+        }
+        this.covers?.setVisibleSlots(this.restoreSlots);
+      }
+    }
+    this.covers?.setFrameBudget(adaptive);
     for (let i = 0; i < this.positions.length; i++) {
       const p = this.positions[i];
       const { row, lane } = this.cells[i];
@@ -1580,18 +1825,33 @@ export class ArchiveScene {
         p.z + entryZ + this.rail.value,
       );
       this.dummy.rotation.set(slope * 0.024 * (1 - detail), 0, 0);
-      const hiddenCell = !this.actualCell(this.cells[i]) || hidden.has(cellKey(this.cells[i])) ||
+      const hiddenCell = ((records.length > 0 || !musicLibrary) && !this.actualCell(this.cells[i])) || hidden.has(cellKey(this.cells[i])) ||
         (!musicIntro && (cinematic || !this.looping) && i >= (musicLibrary ? 5 * this.poolRows : 160));
       this.applyMusicColumnExtent(this.dummy, hiddenCell ? 0 : cinematic ? 1 : this.musicColumnExtent(lane));
       this.dummy.updateMatrix();
-      for (const inst of this.instances) inst.setMatrixAt(i, this.dummy.matrix);
+      if (adaptive) this.dummy.matrix.toArray(this.instanceBudget!.pool, i * 16);
+      else if (this.optimize) this.instances[0]?.setMatrixAt(i, this.dummy.matrix);
+      else for (const inst of this.instances) inst.setMatrixAt(i, this.dummy.matrix);
       if (musicLibrary && this.covers) {
+        if (adaptive) {
+          this.coverEligible[i] = Number(!hiddenCell && this.actualCell(this.cells[i]) &&
+            (!playlistRows.length || Boolean(records[fileAtCell(this.cells[i])]?.album?.tracks.length)));
+          continue;
+        }
+        if (playlistRows.length && !records[fileAtCell(this.cells[i])]?.album?.tracks.length) {
+          this.dummy.scale.setScalar(0); this.dummy.updateMatrix();
+        }
         this.covers.array.setMatrixAt(i, this.dummy.matrix);
-        this.covers.setSlot(i, records[fileAtCell(this.cells[i])]);
+        if (this.actualCell(this.cells[i])) this.covers.setSlot(i, records[fileAtCell(this.cells[i])]);
       }
     }
-    for (const inst of this.instances) inst.instanceMatrix.needsUpdate = true;
-    if (musicLibrary && this.covers) this.covers.array.instanceMatrix.needsUpdate = true;
+    if (!adaptive) {
+      for (const inst of this.instances) inst.instanceMatrix.needsUpdate = true;
+      if (musicLibrary && this.covers) {
+        this.covers.array.instanceMatrix.clearUpdateRanges();
+        this.covers.array.instanceMatrix.needsUpdate = true;
+      }
+    }
     this.model.position.set(
       chosen.x - trackX,
       chosen.y + field(selectedRow, selectedLane) + this.lift.value,
@@ -1896,6 +2156,7 @@ export class ArchiveScene {
       (THREE.MathUtils.lerp(0.0003, 0.0008, detail) *
         this.quality.depthOfField) /
       100;
+    this.applyInstanceBudget(dt, bokehUniforms.focus.value, this.bokeh.enabled ? bokehUniforms.aperture.value : 0, bokehUniforms.maxblur.value);
     this.renderer.info.reset();
     this.selectionLighting?.update(this.model, this.camera, dt,
       musicLibrary && records.length > 0 && this.model.visible, this.reduced, Boolean(cinematic), this.detail, {
@@ -1908,11 +2169,21 @@ export class ArchiveScene {
     // Music frames share the first pass's shadows; the archive reference keeps
     // Three's original automatic updates. Animated casters still update each frame.
     this.renderer.shadowMap.autoUpdate = !musicLibrary;
-    if (musicLibrary && this.renderer.shadowMap.enabled)
+    if (musicLibrary && this.renderer.shadowMap.enabled && !adaptive)
       this.renderer.shadowMap.needsUpdate = true;
     if (render) {
-      this.covers?.flushUploads(this.renderer);
-      this.composer.render();
+      this.updateBudgetShadows();
+      // Camera motion changes the AO projection even without a viewport resize.
+      this.ao.ssaoMaterial.uniforms.cameraProjectionMatrix.value.copy(this.camera.projectionMatrix);
+      this.ao.ssaoMaterial.uniforms.cameraInverseProjectionMatrix.value.copy(this.camera.projectionMatrixInverse);
+      this.gpuTiming?.begin();
+      try {
+        this.gpuTiming?.measure("coverUploads", () => this.covers?.flushUploads(this.renderer, adaptive ? this.musicRenderTransitioning ? 1 : 4 : 8,
+          adaptive ? { prioritySlots: this.coverPriority, timeBudgetMs: this.musicRenderTransitioning ? 0.75 : 1.5 } : undefined));
+        if (this.glassVisibility) this.glassVisibility.moving = this.musicRenderTransitioning;
+        this.composer.render();
+        this.glassVisibility?.renderOverlay(this.renderer);
+      } finally { this.gpuTiming?.end(); }
     }
   }
   /** Compile and populate the real pipeline while the loading surface is up.
@@ -1926,8 +2197,10 @@ export class ArchiveScene {
     this.update(started / 1000, settled, false);
     const visible = this.model.visible;
     this.model.visible = true;
-    await this.renderer.compileAsync(this.scene, this.camera);
-    this.model.visible = visible;
+    try { await this.renderer.compileAsync(this.scene, this.camera); }
+    finally {
+      this.model.visible = visible;
+    }
     if (this.disposed) return;
     await this.covers?.prepareVisible(1200);
     // Bound initialization work as well: at most 16 MiB of tiles per turn.
@@ -1983,7 +2256,11 @@ export class ArchiveScene {
     this.composer.dispose();
     this.scene.clear();
     this.outgoing = [];
+    this.instanceBudget = undefined; this.arrayPicking = undefined; this.shadowArray = undefined;
+    this.instances = []; this.coverSlots = []; this.coverPriority = [];
+    this.shadowState = []; this.coverEligible = new Uint8Array(0);
     this.renderer.dispose();
+    this.gpuTiming?.dispose();
     this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
   }
@@ -2009,6 +2286,19 @@ export class ArchiveScene {
         this.detail === 0 && Math.abs(this.rotation) < 0.02));
   }
   get musicPresentationPhase() { return this.musicPresentation.phase; }
+  get musicRenderTransitioning() {
+    return Boolean(this.themeTransition || this.dragging || this.outgoing.length || this.pulses.length ||
+      this.musicArchiveMotion.active || !this.musicPlacement.settled ||
+      Math.abs(this.lift.velocity) > .025 || Math.abs(this.rail.velocity) > .025 ||
+      Math.abs(this.columnCamera.velocity) > .025 || Math.abs(this.rotation - this.targetRotation) > .01 && this.targetDetail ||
+      Math.abs(this.musicOverview.value - Number(this.musicOverview.active)) > .001 ||
+      !["archive", "presented", "hidden"].includes(this.musicPresentation.phase));
+  }
+  get graphicsIdentity() { return { ...this.graphicsDevice }; }
+  preloadCovers(ahead: readonly (ArchiveRecord | undefined)[]) {
+    this.coverPrefetchAt = 0;
+    this.covers?.prefetch(ahead, 3);
+  }
   getStats() {
     this.model.updateMatrixWorld(true);
     const project = (x: number, y: number, z: number) => {
@@ -2021,14 +2311,28 @@ export class ArchiveScene {
       covers: this.covers?.getStats(),
       arrayMode: this.musicArrayMode,
       graphics: { geometries: this.renderer.info.memory.geometries,
+        ...this.graphicsDevice,
         textures: this.renderer.info.memory.textures, programs: this.renderer.info.programs?.length,
         contextLost: this.renderer.getContext().isContextLost() },
+      gpuTiming: this.gpuTiming?.snapshot(),
+      optimization: { sharedDepth: this.bokeh instanceof SharedDepthBokehPass,
+        sharedDepthFrames: this.bokeh instanceof SharedDepthBokehPass ? this.bokeh.sharedFrames : 0,
+        bokehBudget: this.bokeh instanceof SharedDepthBokehPass ? this.bokeh.getBudget() : null,
+        instanceBudget: this.instanceBudget?.snapshot(),
+        shadowBudget: this.shadowBudget.snapshot(),
+        clearCovers: this.coverClarity?.getStats(),
+        glassVisibility: this.glassVisibility?.getStats(),
+        shelfGlass: { selected: "physical", array: "physical", materialPolicy: "all-visible-physical",
+          arrayNearLimit: null, far: "disabled", visibleReceivesShadow: true, shadowProxyTriangles: 12 },
+        fullSizeDepth: this.ao instanceof BudgetSSAOPass,
+        sharedInstanceBuffers: this.optimize },
       visibleAlbumCells: this.cells.filter((cell) => this.actualCell(cell)).length,
       uniqueAlbumCells: new Set(this.cells.filter((cell) => this.actualCell(cell)).map((cell) => fileAtCell(cell))).size,
       decryption: { ...this.decryption.frame, clarity: this.decryption.clarity },
       topLeft: project(-2.5, 3.7, 0),
       topRight: project(2.5, 3.7, 0),
       projectedCenter: project(0, MUSIC_MODEL.center.y, 0),
+      projectedCoverTop: project(MUSIC_COVER.x, MUSIC_COVER.y + MUSIC_COVER.height / 2 - 0.1, MUSIC_COVER.z),
       labelTopLeft: project(-1.855, 3.27, 0.255),
       labelBottomLeft: project(-1.855, 2.81, 0.255),
       modelPosition: this.model.position
@@ -2056,6 +2360,9 @@ export class ArchiveScene {
       selectedLane: Math.floor(this.selectedSlot / slotStride),
       selectedAlbumId: records[fileAtSlot(this.selectedSlot)]?.album?.id ?? null,
       albumCovers: this.covers?.array.visible ?? false,
+      blankArchive: musicLibrary && !records.length,
+      modelVisible: this.model.visible,
+      arrayVisible: this.instances.some(instance => instance.visible),
       theme: this.theme,
       selectionLight: this.selectionLighting ? {
         experiment: this.selectionLighting.getExperiment(),

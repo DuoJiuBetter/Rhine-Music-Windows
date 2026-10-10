@@ -4,6 +4,12 @@ import { fileURLToPath } from 'node:url'
 import { promises as fs, createReadStream } from 'node:fs'
 import { MusicLibraryStore, safeRootList } from './music-library.mjs'
 import { AudioDecoder, NativeAudioOutput } from './music-audio.mjs'
+import { NeteaseOnline } from './netease-online.mjs'
+import { PlatformAuth } from './platform-auth.mjs'
+import { PlatformCatalog } from './platform-catalog.mjs'
+import { BodianCatalog } from './bodian-catalog.mjs'
+import { PlatformCoverStore } from './platform-media.mjs'
+import { diagnoseOnlineFailure, onlineDiagnostic, onlineRouteContext } from './online-diagnostics.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' }
@@ -84,10 +90,17 @@ export async function createMusicServer({
   defaultRoots = process.env.MUSIC_ROOTS ? process.env.MUSIC_ROOTS.split(path.delimiter).filter(Boolean) : [],
   store: providedStore,
   autoScan = true,
+  online: providedOnline,
+  platformAuth: providedPlatformAuth,
+  catalogs: providedCatalogs,
 } = {}) {
   const store = providedStore ?? await new MusicLibraryStore({ dataDir, defaultRoots }).init()
   const decoder = new AudioDecoder({ dataDir: store.dataDir ?? dataDir })
   const output = new NativeAudioOutput({ dataDir: store.dataDir ?? dataDir, decoder, trackFile: (id) => store.trackFile(id) })
+  const online = providedOnline ?? new NeteaseOnline({ dataDir })
+  const platformAuth = providedPlatformAuth ?? { qq: new PlatformAuth({ provider: 'qq', dataDir }), bodian: new PlatformAuth({ provider: 'bodian', dataDir }) }
+  const catalogs = providedCatalogs ?? { qq: new PlatformCatalog({ provider: 'qq', auth: platformAuth.qq }), ...(platformAuth.bodian ? { bodian: new BodianCatalog({ auth: platformAuth.bodian }) } : {}) }
+  const platformCovers = new PlatformCoverStore()
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Referrer-Policy', 'same-origin')
@@ -100,6 +113,53 @@ export async function createMusicServer({
       if (route.includes('\0') || route.includes('\\')) return json(response, 400, { error: '无效路径' })
       const get = request.method === 'GET' || request.method === 'HEAD'
       if (route === '/api/health' && get) return json(response, 200, { service: 'rhine-local-music', projectDir: PROJECT_DIR, pid: process.pid })
+      const platformLogin = /^\/api\/online\/(qq|bodian)\/auth\/(status|start|poll|cancel|logout)$/.exec(route)
+      if (platformLogin) {
+        const auth = platformAuth[platformLogin[1]], action = platformLogin[2]
+        if (!auth) return json(response, 503, { error: '当前平台未配置。' })
+        if (action === 'status' && request.method === 'GET') return json(response, 200, await auth.status())
+        if (action !== 'status' && request.method === 'POST') {
+          const body = await bodyJson(request)
+          return json(response, 200, await auth[action](action === 'start' ? body.method : body.id))
+        }
+        return json(response, 405, { error: '请求方法不支持' })
+      }
+      const platformRoute = /^\/api\/online\/(qq|bodian)\/(search|playlists|cover|playlists\/([A-Za-z0-9_-]{1,64})\/tracks|songs\/([A-Za-z0-9_-]{1,64})\/info|prepare\/([A-Za-z0-9_-]{1,64}))$/.exec(route)
+      if (platformRoute) {
+        const provider = platformRoute[1], action = platformRoute[2], catalog = catalogs[provider]
+        if (!catalog) return json(response, 503, { error: '当前平台未配置。' })
+        if (action.startsWith('prepare/') && request.method === 'POST') { await bodyJson(request); return json(response, 200, await catalog.prepare(platformRoute[5])) }
+        if (request.method !== 'GET') return json(response, 405, { error: '请求方法不支持' })
+        if (action === 'search') return json(response, 200, await catalog.search(url.searchParams.get('q'), Number(url.searchParams.get('offset') || 0)))
+        if (action === 'playlists') return json(response, 200, await catalog.playlists(Number(url.searchParams.get('offset') || 0)))
+        if (platformRoute[3]) return json(response, 200, await catalog.playlistTracks(platformRoute[3], Number(url.searchParams.get('offset') || 0)))
+        if (platformRoute[4]) return json(response, 200, await catalog.songInfo(platformRoute[4]))
+        if (action === 'cover') {
+          const source = url.searchParams.get('url') || ''
+          if (source.length > 4096) return json(response, 400, { error: '封面地址过长' })
+          const image = await platformCovers.get(provider, source)
+          response.writeHead(200, { 'Content-Type': image.type, 'Content-Length': image.bytes.length, 'Cache-Control': 'private, max-age=300' }); return response.end(image.bytes)
+        }
+      }
+      if (route === '/api/online/netease/search' && request.method === 'GET') {
+        return json(response, 200, await online.search(url.searchParams.get('q'), Number(url.searchParams.get('offset') || 0)))
+      }
+      if (route === '/api/online/netease/auth/status' && request.method === 'GET') return json(response, 200, await online.auth.status())
+      if (route === '/api/online/netease/playlists' && request.method === 'GET') return json(response, 200, await online.playlists(Number(url.searchParams.get('offset') || 0)))
+      const playlistTracks = /^\/api\/online\/netease\/playlists\/([1-9]\d{0,15})\/tracks$/.exec(route)
+      if (playlistTracks && request.method === 'GET') return json(response, 200, await online.playlistTracks(playlistTracks[1], Number(url.searchParams.get('offset') || 0)))
+      const songInfo = /^\/api\/online\/netease\/songs\/([1-9]\d{0,15})\/info$/.exec(route)
+      if (songInfo && request.method === 'GET') return json(response, 200, await online.songInfo(songInfo[1]))
+      const authAction = /^\/api\/online\/netease\/auth\/(start|poll|cancel|logout)$/.exec(route)
+      if (authAction && request.method === 'POST') {
+        const body = await bodyJson(request)
+        return json(response, 200, await online.auth[authAction[1]](body.id))
+      }
+      const onlinePrepare = /^\/api\/online\/netease\/prepare\/([1-9]\d{0,15})$/.exec(route)
+      if (onlinePrepare && request.method === 'POST') {
+        await bodyJson(request)
+        return json(response, 200, await online.prepare(onlinePrepare[1]))
+      }
       if (route === '/api/audio/capabilities' && get) {
         await decoder.init()
         let devices = [], nativeError = null
@@ -198,7 +258,9 @@ export async function createMusicServer({
       const asset = path.resolve(distDir, `.${route === '/' ? '/index.html' : route}`)
       return await serveFile(request, response, { path: asset, allowedRoot: distDir }, { cache: route.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache' })
     } catch (error) {
-      if (!response.headersSent) json(response, error.status ?? (['ENOENT', 'ENOTDIR'].includes(error.code) ? 404 : 400), { error: error.message })
+      const context = onlineRouteContext(request.url)
+      if (context) diagnoseOnlineFailure(error, context.provider, context.operation)
+      if (!response.headersSent) json(response, error.status ?? (['ENOENT', 'ENOTDIR'].includes(error.code) ? 404 : 400), { error: error.message, ...(context ? { diagnostic: onlineDiagnostic(error) } : {}) })
       else response.destroy()
     }
   })

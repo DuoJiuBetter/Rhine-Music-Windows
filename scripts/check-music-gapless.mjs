@@ -267,7 +267,11 @@ test('PCM cache pruning respects current/next leases and releases idempotently',
   // Sparse files exercise real 4 GiB accounting without allocating giant buffers.
   for (const [index, file] of files.entries()) { const handle = await fs.open(file, 'w'); await handle.truncate(1536 * 1024 ** 2); await handle.close(); await fs.utimes(file, new Date(1000 + index * 1000), new Date(1000 + index * 1000)) }
   const release = decoder.retain(files[0]); await decoder.prune(files[2]); await fs.access(files[0])
+  await assert.rejects(fs.access(files[1]))
   release(); release(); assert.equal(decoder.leases.size, 0)
+  // Releasing a lease alone must not delete a file when already below the cap.
+  await decoder.prune(files[2]); await fs.access(files[0])
+  const handle = await fs.open(files[1], 'w'); await handle.truncate(1536 * 1024 ** 2); await handle.close()
   await decoder.prune(files[2]); await assert.rejects(fs.access(files[0]))
   decoder.dispose()
 })

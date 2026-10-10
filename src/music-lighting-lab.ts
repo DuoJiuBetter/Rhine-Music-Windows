@@ -16,32 +16,6 @@ type LightingLabOptions = {
 
 const defaults = DEFAULT_LIGHTING_PRESET;
 
-const approaches: Record<
-  LightingLabMode,
-  { label: string; detail: string; tradeoff: string }
-> = {
-  baseline: {
-    label: "原版",
-    detail: "保留原有环境光与封面照明，作为亮度对照。",
-    tradeoff: "观察整排是否从相邻专辑中分离。",
-  },
-  area: {
-    label: "条形灯",
-    detail: "真实条形灯照亮玻璃顶边与端面。",
-    tradeoff: "反光自然，但会照到邻排；封面不直接响应这盏灯。",
-  },
-  guided: {
-    label: "排光场",
-    detail: "整排高光保留，其他专辑按原版亮度补回。",
-    tradeoff: "其他专辑亮度100%接近原版；降低可加强对比。",
-  },
-  hybrid: {
-    label: "混合",
-    detail: "用排光场控制明暗，再以条形灯补充壳体高光。",
-    tradeoff: "兼顾清晰光带与反光层次，建议先比较。",
-  },
-};
-
 const numericSettings = ["transitionDuration", "strength", "width", "offset", "fill"] as const;
 
 /** Local, scene-independent controls. URL values take precedence over initial values. */
@@ -67,7 +41,7 @@ export function setupLightingLab(
       <span><b>DEV</b> LIGHTING<small>光效调试 · V0.3.1</small></span>
       <span class="lighting-lab-chevron" aria-hidden="true">−</span>
     </button>
-    <button class="lighting-lab-close" type="button" aria-label="关闭光效调试面板" title="关闭面板，保留效果">×</button>
+    <button class="lighting-lab-close" type="button" aria-label="关闭光效调试面板">×</button>
     </div>
     <div id="lighting-lab-controls" class="lighting-lab-controls">
       <div class="lighting-lab-modes" role="group" aria-label="光照方式">
@@ -76,14 +50,10 @@ export function setupLightingLab(
         <button type="button" data-light="guided" aria-pressed="false"><b>B</b> 排光场</button>
         <button type="button" data-light="hybrid" aria-pressed="false"><b>C</b> 混合</button>
       </div>
-      <div class="lighting-lab-explanation" aria-live="polite">
-        <p class="lighting-lab-detail"></p>
-        <p class="lighting-lab-tradeoff"></p>
-      </div>
       <div class="lighting-lab-sliders">
         <label for="lighting-lab-transition"><span>光带切换时长</span><output for="lighting-lab-transition"></output></label>
         <input id="lighting-lab-transition" data-setting="transitionDuration" type="range" min="0.4" max="2.4" step="0.05" aria-label="光带切换时长，秒">
-        <p class="lighting-lab-timing-note">越大越舒缓；默认 ${defaults.transitionDuration.toFixed(2)} 秒。这里是 1× 下的时长，同时受整体切换速度调节。</p>
+
         <label for="lighting-lab-strength"><span>光照强度</span><output for="lighting-lab-strength"></output></label>
         <input id="lighting-lab-strength" data-setting="strength" type="range" min="0" max="2" step="0.05" aria-label="光照强度">
         <label for="lighting-lab-width"><span>光带宽度</span><output for="lighting-lab-width"></output></label>
@@ -97,7 +67,7 @@ export function setupLightingLab(
         <button class="lighting-lab-compare" type="button" aria-pressed="false">按住看原版</button>
         <button class="lighting-lab-reset" type="button">重置</button>
       </div>
-      <p class="lighting-lab-detail-note">专辑详情沿用原选中光；返回专辑架后恢复排光对比。</p>
+
     </div>`;
   stage.append(panel);
 
@@ -140,10 +110,6 @@ export function setupLightingLab(
         String(button.dataset.light === settings.mode),
       );
     }
-    const approach = approaches[settings.mode];
-    panel.querySelector(".lighting-lab-detail")!.textContent = approach.detail;
-    panel.querySelector(".lighting-lab-tradeoff")!.textContent =
-      approach.tradeoff;
     const areaMode = settings.mode === "area";
     panel.querySelector('label[for="lighting-lab-width"] span')!.textContent =
       areaMode ? "灯面宽度" : "光带宽度";

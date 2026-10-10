@@ -177,7 +177,16 @@ test('FFmpeg real format decoding, immutable sources, bounded cache and HTTP sec
   })
   await t.test('symlink escape and cancellation reject before decoding', async () => {
     const outside = path.join(root, 'outside.wav'); await fs.copyFile(wav, outside)
-    const link = path.join(music, 'escape.wav'); await fs.symlink(outside, link)
+    let link = path.join(music, 'escape.wav')
+    try { await fs.symlink(outside, link) }
+    catch (error) {
+      if (process.platform !== 'win32' || error.code !== 'EPERM') throw error
+      // Windows directory junctions do not require symlink privileges. Exercise
+      // the same realpath boundary with the actual outside file through one.
+      const junction = path.join(music, 'outside-junction')
+      await fs.symlink(root, junction, 'junction')
+      link = path.join(junction, 'outside.wav')
+    }
     await assert.rejects(checkedSource(source(link)), /移出/)
     await assert.rejects(decoder.prepare(source(link)), /移出/)
     const playlist = path.join(music, 'playlist.ape')

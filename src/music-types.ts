@@ -20,6 +20,36 @@ export interface MusicTrack {
   decodedAudioUrl?: string;
   localDecodable?: boolean;
   relativePath: string;
+  onlineSource?: {
+    provider: import('./music-platform').MusicProvider;
+    id: string;
+    albumTitle: string;
+    coverUrl?: string;
+    pageUrl: string;
+    fee: number;
+    albumId?: string;
+    /** QQ's audio file identifier can differ from the song identifier. */
+    mediaId?: string;
+    publishTime?: number;
+    aliases?: string[];
+  };
+}
+
+export interface OnlineSongInfo {
+  track: MusicTrack;
+  album: { title: string; artist: string; published?: string; company?: string; description?: string };
+  lyrics: { original: string; translated: string; instrumental: boolean; unavailable: boolean; error?: string };
+  metadataError?: string;
+}
+
+export interface OnlineSearchResults {
+  provider: import('./music-platform').MusicProvider;
+  query: string;
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  tracks: MusicTrack[];
 }
 
 export interface MusicProducer {
@@ -32,6 +62,9 @@ export interface MusicProducer {
 }
 
 export interface MusicAlbum {
+  playlistCell?: { playlistId: string; playlistName: string; playlistIndex: number; songIndex: number; total: number };
+  /** A playback display card; this identity never rewrites library metadata. */
+  playback?: { trackId: string; albumId: string; songTitle: string };
   id: string;
   title: string;
   artist: string;
@@ -77,6 +110,14 @@ export interface MusicAlbum {
     descriptionStatus?: "available" | "not-found" | "error";
     descriptionError?: string;
   };
+}
+
+export interface NeteasePlaylist {
+  id: string;
+  name: string;
+  trackCount: number;
+  coverUrl?: string;
+  owned: boolean;
 }
 
 export interface MusicGenre {

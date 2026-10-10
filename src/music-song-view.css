@@ -1,0 +1,77 @@
+#song-view { margin-top: 24px; }
+.song-view-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
+#song-toggle-stop { display: inline-flex; gap: 11px; align-items: center; min-height: 44px; padding: 10px 12px; margin-left: -12px; border: 0; border-radius: 10px; color: var(--ink); background: transparent; cursor: pointer; transition: color .18s ease, background .18s ease; }
+#song-toggle-stop:hover { color: var(--accent); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+#song-toggle-stop:focus-visible, .song-step-buttons button:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+#song-toggle-stop svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+#song-view-error, #song-metadata-error { font-size: 12px; color: var(--muted); }
+#song-view-error:empty, #song-metadata-error:empty, #song-description:empty { display: none; }
+#song-info[hidden], #song-lyric-view[hidden] { display: none; }
+#song-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; margin: 0; }
+#song-facts dt { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+#song-facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+#song-description { font-size: 13px; line-height: 1.9; white-space: pre-wrap; margin-top: 24px; }
+#song-lyrics { position: relative; height: clamp(180px, 32vh, 410px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 16px 3px; white-space: pre-wrap; }
+.lyric-line { display: block; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; white-space: pre-wrap; cursor: pointer; margin: 0 0 18px; font-size: 15px; line-height: 1.55; color: var(--muted); opacity: .55; transform-origin: left center; }
+.lyric-line.current { font-size: clamp(22px, 2vw, 32px); font-weight: 600; color: var(--ink); opacity: 1; }
+.lyric-line small { display: block; margin-top: 5px; font-size: .65em; font-weight: 400; }
+#song-lyrics.lyrics-untimed { display: block; overflow-y: auto; line-height: 2; padding-top: 28px; }
+.playback-seek { --progress: 0%; appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+.playback-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--progress), var(--line) var(--progress)); }
+.playback-seek::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 11px; height: 11px; margin-top: -4px; border-radius: 50%; background: var(--accent); opacity: 0; transform: scale(.65); transition: opacity .15s ease, transform .15s ease; }
+.playback-seek:hover:not(:disabled)::-webkit-slider-thumb, .playback-seek:active:not(:disabled)::-webkit-slider-thumb, .playback-seek:focus-visible:not(:disabled)::-webkit-slider-thumb { opacity: 1; transform: scale(1); }
+.playback-seek::-moz-range-track { height: 3px; border-radius: 2px; background: var(--line); }
+.playback-seek::-moz-range-progress { height: 3px; border-radius: 2px; background: var(--accent); }
+.playback-seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: var(--accent); opacity: 0; transform: scale(.65); transition: opacity .15s ease, transform .15s ease; }
+.playback-seek:hover:not(:disabled)::-moz-range-thumb, .playback-seek:active:not(:disabled)::-moz-range-thumb, .playback-seek:focus-visible:not(:disabled)::-moz-range-thumb { opacity: 1; transform: scale(1); }
+.playback-seek:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.playback-seek:disabled { opacity: .35; cursor: default; }
+.lyric-transport .song-time { font-size: 11px; }
+.song-time { display: flex; justify-content: space-between; gap: 12px; opacity: .7; font-variant-numeric: tabular-nums; }
+.music-topnav .minimal-transport { position: relative; }
+.mini-playback-below { position: absolute; inset: calc(100% + 2px) 0 auto; min-width: 0; padding: 0 6px 3px 20px; }
+.mini-playback-below[hidden] { display: none; }
+.mini-playback-below [data-mini-lyric] { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 10px; line-height: 16px; color: var(--muted); }
+.mini-playback-below [data-mini-lyric]:empty { display: none; }
+.mini-playback-below .playback-seek { height: 18px; }
+.mini-playback-below .playback-seek::-webkit-slider-thumb { width: 7px; height: 7px; margin-top: -2px; }
+@media (max-width: 700px) {
+  #song-facts { gap: 12px 18px; }
+  #song-lyrics { height: 25vh; gap: 12px; }
+  .mini-playback-below { padding-left: 5px; }
+  .mini-playback-below [data-mini-lyric] { font-size: 9px; }
+}
+
+.song-step-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.song-step-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; transition: color .18s ease, background .18s ease; }
+.song-step-buttons button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .18s ease; }
+.song-step-buttons button:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.song-step-buttons button[data-action="playing-prev"]:hover svg { transform: translateX(-2px); }
+.song-step-buttons button[data-action="playing-next"]:hover svg { transform: translateX(2px); }
+.song-step-buttons button:disabled { opacity: .35; cursor: default; }
+.lyric-transport { margin-top: 16px; }
+.lyric-line:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+#song-lyrics { scrollbar-color: color-mix(in srgb, var(--ink) 25%, transparent) transparent; }
+#song-lyrics::-webkit-scrollbar { width: 4px; background: transparent; }
+#song-lyrics::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) 25%, transparent); border-radius: 4px; }
+#song-lyrics::-webkit-scrollbar-track { background: transparent; }
+#song-lyrics::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+/* Match the archive document's mask sweep. Lyrics reveal on page entry only;
+   offscreen lines appear directly on later scroll / playback changes. */
+.music-app [data-song-reveal] { display: inline-block; max-width: 100%; vertical-align: bottom; position: relative; overflow: hidden; }
+.music-app [data-song-reveal]::after { content: ''; position: absolute; inset: 0; background: var(--ink); transform: translateX(101%); pointer-events: none; }
+.music-app .song-mask-pending::after { transform: translateX(0); }
+.lyric-line > [data-song-reveal] { display: block; width: fit-content; }
+.lyrics-untimed > [data-song-reveal] { display: block; width: fit-content; min-height: 1.55em; }
+.music-app .document-redaction-ink { background: var(--ink); }
+/* Music mode has its own explicit motion preference. Keep the OS preference
+   for the original demo, but do not silently override this app's checkbox. */
+.music-app:not(.reduce-motion) .document-redaction-window { display: block; }
+.music-app.reduce-motion .document-redaction-window,
+.music-app.reduce-motion [data-song-reveal]::after { display: none; }
+.music-app.reduce-motion #song-toggle-stop,
+.music-app.reduce-motion .song-step-buttons button,
+.music-app.reduce-motion .song-step-buttons button svg { transition: none; }
+.music-app.reduce-motion .playback-seek::-webkit-slider-thumb { transition: none; }
+.music-app.reduce-motion .playback-seek::-moz-range-thumb { transition: none; }

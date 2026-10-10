@@ -2,6 +2,10 @@
 
 本说明区分代码授权、音乐适配的开发者署名和第三方素材的权利。公开源码不表示放弃版权，也不表示获得全部原作素材的再授权。
 
+## Windows 社区分发
+
+本衍生版由 **DuoJiuBetter** 维护，基于 RonaldDeng 的音乐适配和 LBEILC 的视觉基础；保留已有版权与许可。当前公开发行包不捆绑 FFmpeg / ffprobe，内置 Node.js 的许可位于 third-party/NODE-LICENSE.txt；原生依赖许可材料随公开包提供。第三方平台、账号与权利反馈详见 [PLATFORM-NOTICE.md](PLATFORM-NOTICE.md)，隐私说明见 [PRIVACY.md](PRIVACY.md)。Windows 版问题及权利联系邮箱为 **2228396737@qq.com**；上游作者不承担本衍生版支持。以下原有署名和资源来源继续保留。
+
 ## 开发者与上游
 
 | 范围 | 署名与来源 |
@@ -47,6 +51,14 @@ APE 回归仅在本机临时目录使用 [FFmpeg 官方音频样本](https://sam
 
 ## 在线资料
 
+Perf21 使用 Undici 7.28.0（MIT）的独立连接池，将网易云 API 固定为 IPv4；完整许可见 [Undici-LICENSE.txt](third-party/Undici-LICENSE.txt)，版本固定于 package-lock.json。保留 Node 内置 fetch 及已有协议、TLS 校验、超时和诊断流程，不改动其他平台或系统网络设置。来源：[nodejs/undici](https://github.com/nodejs/undici)。
+
+Perf16 新增波点音乐适配，扫码、请求签名、个人歌单与歌词协议参考 [MoeclubM/PyBodian](https://github.com/MoeclubM/PyBodian) 并移植到现有 Node 服务；保留 [MIT 许可原文](third-party/PyBodian-LICENSE.txt)。没有使用其本机凭据提取、客户端数据库或日志读取功能，没有引入 AGPL 的 bodian-music-api / Folia 代码。波点会话独立加密保存，音乐内容与账号权限仍由平台决定；第三方协议适配不表示官方合作。来源和验证边界见 [Perf16 说明](docs/WINDOWS-PERF16.md)。
+
+Windows 在线搜索适配使用 Binaryify 的 NeteaseCloudMusicApi 4.32.0（MIT）。完整许可保存在 `third-party/NETEASE-API-LICENSE.txt`，锁定版本见 package-lock.json。它是第三方接口实现，非网易官方 SDK；网易云歌曲、封面与资料的权利仍归各权利人，依赖的 MIT 许可不重新授权这些内容。在线音频只播放网易云返回的音源，不把在线查询内容纳入发布包。
+
+Perf11 新增 QQ 音乐与酷狗音乐协议适配。QQ 接口参考 [ylw1997/qqmusic-api](https://github.com/ylw1997/qqmusic-api) 和 [Suxiaoqinx/QQMusicapi](https://github.com/Suxiaoqinx/QQMusicapi) 的公开接口描述并独立实现；未分发其完整 SDK。酷狗协议参数与签名参考 [MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)，保留其 [MIT 原文](third-party/KuGouMusicApi-LICENSE.txt)。平台商标、歌曲、封面、歌词、账号数据各归相应权利人；协议代码许可不授权音乐内容，适配不表示官方合作。账号、在线查询内容及研究源仓库不随发布包分发，具体接入和验证边界见 [Perf11 说明](docs/WINDOWS-PERF11.md)。
+
 Wikipedia 摘要、Wikidata 与 MusicBrainz 数据按其来源许可处理。客户端保存介绍时同时保存来源链接、取得时间和许可说明；此类用户自行查询的缓存不纳入项目 MIT 授权，也不进入发布包。MusicBrainz 将核心数据和补充数据分别授权，详见[官方数据许可](https://musicbrainz.org/doc/About/Data_License)；不能仅因为程序开源就统一将数据改授 MIT。
 
-如发现署名遗漏或具体权利问题，请通过本仓库 [Issues](https://github.com/RonaldDeng/Rhine-Music-Demo/issues) 提供涉及文件、来源及说明，维护者可据此核对。
+如发现 Windows 社区版署名遗漏或具体权利问题，请联系 **2228396737@qq.com**，按 [PLATFORM-NOTICE.md](PLATFORM-NOTICE.md) 提供涉及文件、来源及说明。上游项目问题可联系对应上游维护者。

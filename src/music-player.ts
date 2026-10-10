@@ -1,3 +1,5 @@
+import { musicPlatforms } from './music-platform.ts';
+import { fetchOnline, reportOnlineFailure } from './online-debug.ts';
 import type { MusicTrack } from "./music-types";
 import { normalizeSongTransition, type SongTransitionMode } from "./music-song-transition.ts";
 import { AudioClockSuspended, BrowserGaplessPlayer } from "./music-browser-gapless.ts";
@@ -47,6 +49,23 @@ export interface MusicPlayerState {
 type Listener = (state: MusicPlayerState) => void;
 type Transport = MusicPlayerState["transport"];
 type Fade = { timer: ReturnType<typeof setTimeout>; finish: () => void };
+type OnlineRecovery = { retries: number };
+
+const ONLINE_RETRY_DELAYS = [600, 1400, 2800] as const;
+const retryableOnlineStatus = (status: number) => [408, 425, 429].includes(status) || status >= 500 && status <= 599;
+class OnlineSourceError extends Error {
+  readonly retryable: boolean;
+  constructor(message: string, retryable: boolean) { super(message); this.retryable = retryable; }
+}
+const retryDelay = (milliseconds: number, signal: AbortSignal) => new Promise<boolean>((resolve) => {
+  if (signal.aborted) { resolve(false); return; }
+  const finish = (ready: boolean) => {
+    clearTimeout(timer); signal.removeEventListener('abort', abort); resolve(ready);
+  };
+  const abort = () => finish(false);
+  const timer = setTimeout(() => finish(true), milliseconds);
+  signal.addEventListener('abort', abort, { once: true });
+});
 
 const SONG_FADE_MS = 450;
 const unit = (value: number) => Math.max(0, Math.min(1, value));
@@ -82,6 +101,7 @@ export class MusicPlayer {
   private disposed = false;
   private pendingSeek: number | null = null;
   private preparation?: AbortController;
+  private onlineRecovery?: OnlineRecovery;
   private nativePoll?: ReturnType<typeof setTimeout>;
   private nativeEndedSerial = 0;
   private outputOperation = 0;
@@ -254,6 +274,10 @@ export class MusicPlayer {
   }
 
   async play(id: string, tracks?: readonly MusicTrack[]): Promise<void> {
+    return this.playAttempt(id, tracks, { retries: 0 });
+  }
+
+  private async playAttempt(id: string, tracks: readonly MusicTrack[] | undefined, recovery: OnlineRecovery): Promise<void> {
     if (this.disposed) return;
     const queue = tracks ? uniqueTracks(tracks) : this.value.queue;
     if (tracks && (queue.length !== this.value.queue.length || queue.some((track, i) => track.id !== this.value.queue[i]?.id))) {
@@ -267,6 +291,7 @@ export class MusicPlayer {
     }
     const track = queue[index];
     if (this.value.backend === "coreaudio") return this.playNative(track, queue, index);
+    if (this.value.songTransitionMode === "gapless" && queue.some(item => item.onlineSource)) this.gaplessWarning();
     if (this.value.songTransitionMode === "gapless" && !this.gaplessFallback)
       return this.playGapless(track, queue, index);
     this.gapless?.stop();
@@ -281,6 +306,7 @@ export class MusicPlayer {
         ? this.song
         : undefined;
     this.value.currentTrack = track;
+    this.onlineRecovery = track.onlineSource ? recovery : undefined;
     this.value.currentIndex = index;
     this.value.error = null;
     this.value.loading = true;
@@ -288,7 +314,7 @@ export class MusicPlayer {
     this.value.playing = !!resume && !resume.paused;
     this.value.currentTime = resume
       ? this.pendingSeek ?? seconds(resume.currentTime)
-      : 0;
+      : retainedSeek ?? 0;
     this.value.duration =
       (resume ? seconds(resume.duration) : 0) || seconds(track.duration);
     if (!resume) this.pendingSeek = retainedSeek;
@@ -316,6 +342,34 @@ export class MusicPlayer {
       this.pendingSeek = retainedSeek;
     }
     let audioUrl = track.audioUrl;
+    if (!resume && track.onlineSource) {
+      const controller = new AbortController(); this.preparation = controller;
+      try {
+        const response = await fetchOnline(track.onlineSource.provider, 'playback', `/api/online/${track.onlineSource.provider}/prepare/${encodeURIComponent(track.onlineSource.id)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: controller.signal,
+        }, recovery.retries + 1);
+        const result = await response.json().catch(() => {
+          reportOnlineFailure(track.onlineSource!.provider, 'playback', { stage: 'response', code: `${track.onlineSource!.provider.toUpperCase()}_FRONTEND_INVALID_JSON` }, response.status, recovery.retries + 1);
+          throw new OnlineSourceError(`${musicPlatforms[track.onlineSource!.provider]}返回了无法读取的音源响应。`, !response.ok && retryableOnlineStatus(response.status));
+        }) as { audioUrl?: string; error?: string; trial?: { start: number; end: number } };
+        if (request !== this.operation || this.disposed || controller.signal.aborted) return;
+        if (response.ok && (!result || typeof result.audioUrl !== 'string' || !result.audioUrl)) reportOnlineFailure(track.onlineSource.provider, 'playback', { stage: 'response', code: `${track.onlineSource.provider.toUpperCase()}_FRONTEND_EMPTY_SOURCE` }, response.status, recovery.retries + 1);
+        if (!response.ok || !result || typeof result.audioUrl !== 'string' || !result.audioUrl) throw new OnlineSourceError(
+          result?.error || `${musicPlatforms[track.onlineSource.provider]}没有返回可播放的音源。`,
+          !response.ok && retryableOnlineStatus(response.status),
+        );
+        audioUrl = result.audioUrl;
+        const trialNotice = `${musicPlatforms[track.onlineSource.provider]}当前仅提供这首歌的试听片段。`;
+        this.value.transitionWarning = result.trial ? trialNotice : this.value.transitionWarning === trialNotice ? null : this.value.transitionWarning;
+        this.emit();
+      } catch (error) {
+        if (request !== this.operation || this.disposed || controller.signal.aborted) return;
+        await this.recoverOnline(track, request, recovery,
+          error instanceof OnlineSourceError ? error.message : `${musicPlatforms[track.onlineSource.provider]}音源请求失败或超时，请检查网络后重试。`,
+          !(error instanceof OnlineSourceError) || error.retryable);
+        return;
+      } finally { if (this.preparation === controller) this.preparation = undefined; }
+    }
     // Older indexes marked DSD undecodable. Always prepare a PCM source for it,
     // including when that cached entry predates decodedAudioUrl.
     const dsd = isDsdTrack(track);
@@ -364,8 +418,50 @@ export class MusicPlayer {
     } catch (error) {
       if (request !== this.operation || this.disposed || this.song !== audio)
         return;
-      this.fail(this.playbackError(track, error));
+      await this.handleSongFailure(track, error, request, recovery);
     }
+  }
+
+  private async handleSongFailure(track: MusicTrack, error: unknown, request: number, recovery = this.onlineRecovery): Promise<void> {
+    if (request !== this.operation || this.disposed) return;
+    const message = this.playbackError(track, error);
+    if (!track.onlineSource || !recovery || !this.expectsSong()) { this.fail(message); return; }
+    const name = error instanceof DOMException ? error.name : '';
+    const code = this.song?.error?.code;
+    const diagnosticCode = code && code >= 1 && code <= 4 ? `MEDIA_${code}` : name === 'NotAllowedError' ? 'PLAY_NOT_ALLOWED' : name === 'AbortError' ? 'PLAY_ABORTED' : 'PLAY_FAILED';
+    reportOnlineFailure(track.onlineSource.provider, 'playback', { stage: 'media', code: `${track.onlineSource.provider.toUpperCase()}_${diagnosticCode}` }, undefined, recovery.retries + 1);
+    // A stale/failed media URL can surface as MEDIA_ERR_SRC_NOT_SUPPORTED.
+    // Decoder failures and gesture rejection cannot be repaired by refreshing it.
+    const retryable = !['NotAllowedError', 'AbortError'].includes(name) && code !== 1 && code !== 3;
+    await this.recoverOnline(track, request, recovery, message, retryable);
+  }
+
+  private async recoverOnline(track: MusicTrack, request: number, recovery: OnlineRecovery, message: string, retryable: boolean): Promise<void> {
+    if (request !== this.operation || this.disposed || this.value.currentTrack?.id !== track.id) return;
+    if (!retryable || recovery.retries >= ONLINE_RETRY_DELAYS.length) {
+      this.fail(retryable ? `${message}（已自动重试 ${recovery.retries} 次）` : message);
+      return;
+    }
+    const delay = ONLINE_RETRY_DELAYS[recovery.retries++];
+    // Claim the failure before releasing the element: its error event and
+    // rejected play() promise must share one attempt, never schedule two retries.
+    const waiting = ++this.operation;
+    this.preparation?.abort();
+    const position = this.pendingSeek ?? seconds(this.song?.currentTime ?? this.value.currentTime);
+    this.releaseSong();
+    this.pendingSeek = position;
+    const controller = new AbortController(); this.preparation = controller;
+    this.transport = 'loading'; this.value.loading = true; this.value.playing = false;
+    this.value.currentTime = position; this.value.error = null;
+    this.emit();
+    try {
+      if (waiting !== this.operation || this.disposed || controller.signal.aborted) return;
+      void this.reconcileBgm();
+      if (!await retryDelay(delay, controller.signal) || waiting !== this.operation || this.disposed) return;
+    } finally { if (this.preparation === controller) this.preparation = undefined; }
+    // Fresh source and element each time; the budget survives successful loads
+    // within this play intent. Stop/pause/selection abort both wait and request.
+    await this.playAttempt(track.id, undefined, recovery);
   }
 
   async toggle(): Promise<void> {
@@ -394,7 +490,10 @@ export class MusicPlayer {
       this.cancelSongFade();
       this.transport = "paused";
       this.song?.pause();
-      if (this.songTrackId !== this.value.currentTrack?.id) this.releaseSong();
+      if (this.songTrackId !== this.value.currentTrack?.id) {
+        const position = this.pendingSeek ?? this.value.currentTime;
+        this.releaseSong(); this.pendingSeek = position;
+      }
       else this.setSongGain(1);
       this.value.playing = false;
       this.value.loading = false;
@@ -674,7 +773,7 @@ export class MusicPlayer {
       }
     });
     audio.addEventListener("error", () => {
-      if (active()) this.fail(this.playbackError(track, audio.error));
+      if (active()) void this.handleSongFailure(track, audio.error, this.operation);
       else if (this.song === audio) this.cancelSongFade();
     });
     audio.src = source || `/api/audio/${encodeURIComponent(track.id)}`;
@@ -767,6 +866,7 @@ export class MusicPlayer {
     const name = error instanceof DOMException ? error.name : "";
     if (name === "NotAllowedError")
       return "浏览器暂未允许播放，请点击播放按钮重试。";
+    if (track.onlineSource) return `${musicPlatforms[track.onlineSource.provider]}音频加载失败，请检查网络并重新点击播放，以获取新的播放地址。`;
     const media = this.song?.error;
     if (media?.code === 2)
       return "音频读取失败：请检查本地服务和音乐文件是否仍然可用。";

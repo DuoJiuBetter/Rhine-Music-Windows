@@ -23,11 +23,15 @@ export let categories = ["全部档案", ...content.categories];
 export let archiveColumns = content.columns;
 export let musicLibrary = false;
 export let slotStride = 32;
+export let playlistRows: string[] = [];
+let playlistCells = new Map<string, number>();
+let playlistLengths: number[] = [];
 let filesByColumn = archiveColumns.map((name) => records.flatMap((record, index) => record.category === name ? [index] : []));
 
 /** Replace the view model atomically; audio files and their metadata stay intact. */
 export function setMusicAlbums(albums: MusicAlbum[], genres: MusicGenre[] = [], sortMode: MusicSortMode = "genre") {
   musicLibrary = true;
+  playlistRows = []; playlistLengths = []; playlistCells.clear();
   const ordered = orderMusicAlbums(albums, sortMode);
   const usedGenres = new Set(ordered.map((album) => album.genreId));
   const names = new Map(genres.map((genre) => [genre.id, genre.name]));
@@ -71,15 +75,49 @@ export function setMusicAlbums(albums: MusicAlbum[], genres: MusicGenre[] = [], 
   slotStride = Math.max(32, ...filesByColumn.map((files) => files.length + 12));
 }
 
+/** Finite, contiguous song rows in the existing display pool. Side columns
+ * continue the queue in blocks of rows; they never duplicate or wrap songs. */
+export function setPlaybackAlbums(albums: MusicAlbum[], rows: number) {
+  setMusicAlbums(albums, [{ id: 'playback', name: '播放队列' }]);
+  archiveColumns = Array.from({ length: Math.max(5, Math.ceil(albums.length / rows) + 2) }, (_, lane) => lane < 2 ? '' : '播放队列');
+  filesByColumn = archiveColumns.map((_, lane) => lane < 2 ? [] : albums.flatMap((_, index) => Math.floor(index / rows) === lane - 2 ? [index] : []));
+  slotStride = rows + 12;
+}
+
+/** Repeat the finite playlists and each playlist's own songs through the display pool. */
+export function setPlaylistAlbums(albums: MusicAlbum[], names: string[]) {
+  setMusicAlbums(albums);
+  playlistRows = [...names];
+  slotStride = Math.max(32, ...albums.map(album => (album.playlistCell?.total || 0) + 24));
+  archiveColumns = ['', '', ...names];
+  filesByColumn = archiveColumns.map(() => []);
+  records.forEach((record, index) => {
+    const cell = record.album!.playlistCell!;
+    playlistLengths[cell.playlistIndex] = Math.max(1, cell.total);
+    const lane = cell.playlistIndex + 2, row = cell.songIndex + 12;
+    playlistCells.set(`${lane}:${row}`, index); filesByColumn[lane].push(index);
+  });
+}
+export function playlistFile(lane: number, row: number) {
+  if (!playlistRows.length || !Number.isInteger(lane) || !Number.isInteger(row)) return -1;
+  const playlist = ((lane - 2) % playlistRows.length + playlistRows.length) % playlistRows.length;
+  const period = playlistLengths[playlist] || 1;
+  const song = ((row - 12) % period + period) % period;
+  return playlistCells.get(`${playlist + 2}:${song + 12}`) ?? -1;
+}
+
 export function columnFiles(lane: number) {
   return filesByColumn[lane] ?? [];
 }
 export function fileLocation(index: number) {
+  const playlist = records[index]?.album?.playlistCell;
+  if (playlist) { const lane = playlist.playlistIndex + 2, row = playlist.songIndex + 12; return { lane, row, slot: lane * slotStride + row }; }
   const lane = Math.max(0, filesByColumn.findIndex((files) => files.includes(index)));
   const row = 12 + Math.max(0, columnFiles(lane).indexOf(index));
   return { lane, row, slot: lane * slotStride + row };
 }
 export function fileAtSlot(slot: number) {
+  if (playlistRows.length) return playlistFile(Math.floor(slot / slotStride), slot % slotStride);
   const files = columnFiles(Math.floor(slot / slotStride));
   return files[Math.max(0, Math.min(files.length - 1, (slot % slotStride) - 12))] ?? -1;
 }

@@ -20,7 +20,8 @@ export async function findExecutable(name, override) {
     if (!path.isAbsolute(override)) throw failure(`${name} 路径必须是绝对路径`)
     return exists(override)
   }
-  for (const candidate of [...(override ? [override] : []), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`, ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, name))]) {
+  const executableName = process.platform === 'win32' && !path.extname(name) ? `${name}.exe` : name;
+  for (const candidate of [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`, ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map((dir) => path.join(dir.replace(/^"|"$/g, ''), executableName))]) {
     if (override && candidate === override && !path.isAbsolute(candidate)) throw failure(`${name} 路径必须是绝对路径`)
     if (await exists(candidate)) return candidate
   }
@@ -186,14 +187,16 @@ export class AudioDecoder {
   async prune(protectedFile) {
     const entries = await fs.readdir(this.cacheDir)
     const files = (await Promise.all(entries.filter((name) => /^[a-f0-9]{64}\.wav$/.test(name)).map(async (name) => { const file = path.join(this.cacheDir, name); return { file, ...await fs.stat(file) } }))).sort((a, b) => b.mtimeMs - a.mtimeMs)
-    let total = 0
+    // Count pinned files first: equal timestamps must not let an unpinned file
+    // consume space needed by the protected current/next PCM file.
+    let total = files.filter((file) => file.file === protectedFile || this.leases.has(file.file)).reduce((sum, file) => sum + file.size, 0)
     for (const file of files) {
-      total += file.size
+      if (file.file === protectedFile || this.leases.has(file.file)) continue
       // The current and pre-scheduled next file remain leased even before Swift
       // opens them. Native keeps at most these two (each below 2 GiB).
-      if (file.file !== protectedFile && !this.leases.has(file.file) && total > MAX_CACHE_BYTES) {
+      if (total + file.size > MAX_CACHE_BYTES) {
         await fs.rm(file.file, { force: true }); await fs.rm(`${file.file}.json`, { force: true })
-      }
+      } else total += file.size
     }
   }
   dispose() { this.disposed = true; for (const job of this.jobs.values()) job.controller.abort() }

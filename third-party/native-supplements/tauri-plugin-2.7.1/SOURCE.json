@@ -1,0 +1,11 @@
+{
+  "crate": "tauri-plugin",
+  "version": "2.7.1",
+  "repository": "https://github.com/tauri-apps/tauri",
+  "revision": "30da1fd6e17de6107ecc850c95dfb16b5729f2dd",
+  "files": [
+    "LICENSE-APACHE-2.0",
+    "LICENSE-MIT",
+    "LICENSE.spdx"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "crate": "webview2-com",
+  "version": "0.39.1",
+  "repository": "https://github.com/wravery/webview2-rs",
+  "revision": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+  "files": [
+    "LICENSE"
+  ]
+}

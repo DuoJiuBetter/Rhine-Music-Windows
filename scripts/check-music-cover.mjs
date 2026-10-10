@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 import * as THREE from "three";
 import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, containCover, paintCover } from "../src/cover-atlas.ts";
+import { CoverClarityState } from '../src/cover-clarity-pass.ts';
 
 // Deterministic image decode/canvas harness exercises production ownership and
 // drawing code. Pixel quality and GPU transmission are checked in the browser.
@@ -41,6 +42,14 @@ const record = (id) => ({ id, title: `Album ${id}`, album: { id, title: `Album $
 const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
 try {
+  const clarity = new CoverClarityState();
+  const selectedShader = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
+  const shelfShader = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
+  clarity.bind(selectedShader, true); clarity.bind(shelfShader, false);
+  clarity.inspection.value = 1;
+  assert.equal(selectedShader.uniforms.coverInspection.value, 1);
+  assert.equal(shelfShader.uniforms.coverInspection.value, 0, 'inspection readability must not brighten every shelf cover');
+  assert.ok(selectedShader.fragmentShader.includes('mix(outgoingLight, diffuseColor.rgb, coverInspection)'));
   // Complete art, centred on all aspect ratios, with resolution-independent
   // physical margins. No crop, negative size, UV flip or ownership rescale.
   for (const [width, height] of [[1024, 1024], [1800, 600], [600, 1800], [1, 2000], [2000, 1]]) {
@@ -63,6 +72,10 @@ try {
     commands.forEach(command => assert.deepEqual(command, commands[0], "atlas, selection and viewer paint in the same UV space"));
   }
   const atlas = new CoverAtlas(32, 4096, 16);
+  const integrated = new CoverAtlas(432, 16384, 8, undefined, 128);
+  assert.deepEqual([integrated.getStats().atlasWidth, integrated.getStats().atlasHeight, integrated.getStats().atlasBytes], [2048, 3456, 27 * 1024 ** 2]);
+  assert.equal(integrated.selected.material.map.image.width, COVER_PAINT_SIZE, "Selected cover keeps its full resolution");
+  integrated.dispose();
   assert.equal(atlas.array.geometry.attributes.coverTile.count, 32);
   assert.equal(atlas.array.material.map.generateMipmaps, false);
   assert.equal(atlas.array.material.map.anisotropy, 1);
@@ -161,8 +174,8 @@ try {
     await flush();
   }
   assert.equal(cold.getStats().peakDecodes, 3);
-  assert.ok(cold.getStats().cachedBytes <= 16 * 1024 ** 2);
-  assert.ok(cold.getStats().cachedImages <= 48);
+  assert.ok(cold.getStats().cachedBytes <= 48 * 1024 ** 2);
+  assert.ok(cold.getStats().cachedImages <= 192);
   while (cold.getStats().dirtyTiles) cold.flushUploads(renderer);
   assert.equal(allocations.length, 1);
   assert.equal(cold.array.material.map.version, versionBefore);
@@ -194,9 +207,58 @@ try {
   assert.equal(cold.getStats().queuedDecodes, 0);
   assert.equal(cold.getStats().activeDecodes, 0);
   assert.equal(cold.flushUploads(renderer), 0, "disposing cancels queue, source decoding and GPU uploads");
+  const compact = new CoverAtlas(4, 8192, 8);
+  const compactCopies = [];
+  const compactRenderer = { initTexture() {}, copyTextureToTexture: (source, _target, _region, position) => compactCopies.push({ token: source.image.token, position: position.toArray() }) };
+  const beforeUv = Array.from(compact.array.geometry.attributes.coverTile.array.slice(8, 12));
+  compact.setVisibleSlots([2, 0]);
+  assert.equal(compact.array.count, 2);
+  assert.deepEqual(Array.from(compact.array.geometry.attributes.coverTile.array.slice(0, 4)), beforeUv, 'Compaction keeps logical atlas ownership');
+  compact.setFrameBudget(true);
+  const requests = [{ slot: 2, record: record('compact-2') }, { slot: 0, record: record('compact-0') }];
+  compact.prepareFrame(requests, 1, 1000);
+  assert.equal(compact.getStats().lastPrepared, 1);
+  assert.equal(compact.getStats().activeDecodes, 1, 'Prepare jobs stop at the per-frame count');
+  compact.flushUploads(compactRenderer, 1, { prioritySlots: [2, 0], timeBudgetMs: 1000 });
+  assert.equal(compact.array.geometry.attributes.coverReady.getX(0), 1);
+  pending.get('cover-compact-2').resolve(); await flush();
+  assert.equal(compact.getStats().pendingPaints, 1, 'Decode completion queues canvas work');
+  compact.prepareFrame(requests, 1, 1000);
+  compact.flushUploads(compactRenderer, 1, { prioritySlots: [2], timeBudgetMs: 1000 });
+  assert.equal(compactCopies.at(-1).token, 'cover-compact-2');
+  compact.setVisibleSlots([0, 2]);
+  assert.equal(compact.array.geometry.attributes.coverReady.getX(1), 1, 'Ready state follows the logical slot');
+  compact.prepareFrame([{ slot: 2, record: record('compact-new') }], 0, 1000);
+  assert.equal(compact.array.geometry.attributes.coverReady.getX(1), 0, 'Planning hides stale art before deferred painting');
+  assert.equal(compact.flushUploads(compactRenderer, 1, { prioritySlots: [2], timeBudgetMs: 1000 }), 0);
+  compact.reset();
+  assert.equal(compact.getStats().pendingPaints, 0);
+  compact.dispose();
+  const speculative = new CoverAtlas(432, 8192, 8);
+  speculative.prefetch(Array.from({ length: 100 }, (_, index) => record(`ahead-${index}`)), 3);
+  assert.equal(speculative.getStats().activeDecodes, 2, 'prefetch leaves a decoder for selection');
+  assert.ok(speculative.getStats().queuedDecodes <= 32, 'ahead queue is bounded before image allocation');
+  assert.equal(speculative.getStats().dirtyTiles, 0, 'preloading never paints or uploads the atlas');
+  const immediate = speculative.select(record('urgent-ahead'));
+  assert.equal(speculative.getStats().activeDecodes, 3, 'selected art can begin without waiting for speculative decoders');
+  assert.ok(pending.has('cover-urgent-ahead'));
+  speculative.prefetch([record('fresh-plan')], 1);
+  assert.equal(speculative.getStats().queuedDecodes, 1, 'old speculative queue is replaced');
+  pending.get('cover-urgent-ahead').resolve(); await immediate;
+  pending.get('cover-ahead-0').resolve(); pending.get('cover-ahead-1').resolve(); await flush();
+  pending.get('cover-fresh-plan').resolve(); await flush();
+  const warmed = decodes;
+  await speculative.select(record('fresh-plan'));
+  speculative.setSlot(0, record('fresh-plan'));
+  assert.equal(decodes, warmed, 'predecoded detailed art serves selection and tile without a new decode');
+  assert.equal(speculative.selected.material.map.image.token, 'cover-fresh-plan');
+  speculative.reset(); await flush();
+  assert.equal(speculative.getStats().cachedBytes, 0);
+  assert.equal(speculative.getStats().queuedDecodes, 0);
+  speculative.dispose();
   atlas.dispose();
   snapshot.material.map.dispose(); snapshot.material.dispose();
-  console.log("V0.4.0 cover pipeline passed: all aspect ratios, shared UV/painter, half-texel guards, 3-source cold-start bound, priority selection, 16 MiB cache cap, 8-tile/2 MiB partial uploads, no stale recycled art, correct top/bottom UV mapping, bounded prewarm, reset/dispose races, independent snapshots and viewer.");
+  console.log("Cover pipeline passed: shared UV/painter, bounded decode and ahead queue, warm focus art, stale prefetch cancellation, 48 MiB cache cap, partial uploads, recycled slot safety and reset/dispose.");
 } finally {
   globalThis.document = previousDocument; globalThis.Image = previousImage;
 }

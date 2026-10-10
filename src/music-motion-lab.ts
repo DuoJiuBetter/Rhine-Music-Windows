@@ -25,7 +25,7 @@ export function setupMotionLab(host: HTMLElement, options: MotionLabOptions) {
         <span><b>DEV</b> MOTION<small>整体切换速度</small></span>
         <span class="lighting-lab-chevron" aria-hidden="true">−</span>
       </button>
-      <button class="lighting-lab-close" type="button" aria-label="关闭动画速度调试面板" title="关闭面板，保留效果">×</button>
+      <button class="lighting-lab-close" type="button" aria-label="关闭动画速度调试面板">×</button>
     </div>
     <div id="motion-lab-controls" class="lighting-lab-controls">
       <div class="lighting-lab-sliders">
@@ -33,7 +33,7 @@ export function setupMotionLab(host: HTMLElement, options: MotionLabOptions) {
         <input id="motion-lab-speed" type="range" min="${MIN_MUSIC_MOTION_SPEED}" max="${MAX_MUSIC_MOTION_SPEED}" step="0.05" aria-label="动画整体切换速度">
       </div>
       <div class="motion-lab-scale"><span>慢 · 0.25×</span><span>快 · 3×</span></div>
-      <p class="lighting-lab-timing-note">专辑、镜头、文字与光带同步变速。光带实际时长 = 光效面板时长 ÷ 此倍率。歌曲播放和开场片头不变。</p>
+
       <p class="motion-lab-status" role="status">实时生效 · 自动保存在本机</p>
       <div class="lighting-lab-actions"><button class="motion-lab-reset" type="button">恢复 1×</button></div>
     </div>`;

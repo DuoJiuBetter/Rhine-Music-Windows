@@ -1,0 +1,39 @@
+.online-debug {
+  position: absolute;
+  z-index: 80;
+  right: 24px;
+  bottom: 28px;
+  width: min(440px, calc(100% - 48px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 12px 36px #0003;
+  user-select: text;
+}
+.online-debug header, .online-debug footer { display: flex; align-items: center; gap: 14px; }
+.online-debug header { justify-content: space-between; }
+.online-debug button { border: 0; background: none; padding: 6px 0; cursor: pointer; }
+.online-debug button:hover { color: var(--accent); }
+.online-debug code { display: block; margin: 10px 0; overflow-wrap: anywhere; font-size: 12px; }
+.online-debug [data-debug-deepest] { display: block; margin: 0 0 10px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.online-debug textarea {
+  display: block;
+  width: 100%;
+  height: min(180px, 28vh);
+  min-height: 55px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 11px/1.6 Consolas, monospace;
+  user-select: text;
+}
+.online-debug footer { margin-top: 8px; font-size: 12px; }
+.online-debug footer span { color: var(--muted); }
+@media (max-height: 480px) { .online-debug { bottom: 10px; padding: 10px; } .online-debug textarea { height: 70px; } }

@@ -1,4 +1,9 @@
 node_modules/
+/src-tauri/target/
+/src-tauri/gen/
+/desktop-runtime/
+/desktop-binaries/
+/artifacts/
 backups/
 dist/
 .tools/
@@ -31,6 +36,8 @@ music-data*/
 .Rhistory
 .RData
 /config.json
+*.dpapi
+*.dpapi.*.tmp
 /launcher.lock
 *.backup
 *.zip

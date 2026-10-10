@@ -29,12 +29,23 @@ export interface OverviewColumn {
   selected: boolean;
   /** Shared physical edge visibility; omitted by static projection fixtures. */
   extent?: number;
+  playlist?: boolean;
+  position?: number;
+}
+
+/** A fixed header position leaves room for the complete playlist drawer. */
+export function overviewLabelPlacement(column: OverviewColumn, width: number, height: number) {
+  const listWidth = Math.min(280, Math.max(0, width - 48));
+  const labelWidth = column.playlist ? Math.max(0, listWidth - 40) : width < 600 ? 116 : 160;
+  const listHeight = Math.min(260, height * .28, Math.max(50, height - 240));
+  const x = column.playlist ? Math.max(listWidth / 2 + 24, Math.min(width - listWidth / 2 - 24, column.x)) : column.x;
+  const y = column.playlist ? Math.max(115, Math.min(height - listHeight - 64, column.y)) : column.y;
+  return { x, y, labelWidth, listWidth, listHeight };
 }
 
 /** Cull labels near screen edges and collisions, prioritising the selected lane. */
 export function visibleOverviewLabels(columns: OverviewColumn[], width: number, height: number,
   retained: ReadonlySet<number> = new Set(), expandedLane: number | null = null) {
-  const labelWidth = width < 600 ? 116 : 160;
   const accepted: OverviewColumn[] = [];
   for (const column of [...columns].sort((a, b) => Number(b.lane === expandedLane) - Number(a.lane === expandedLane) ||
     Number(b.selected) - Number(a.selected) ||
@@ -43,17 +54,25 @@ export function visibleOverviewLabels(columns: OverviewColumn[], width: number, 
     // A small exit buffer prevents a projected label from chattering at the
     // same edge where it entered. Its retained node still follows the column.
     const edge = retained.has(column.lane) ? -18 : 14;
-    // Every candidate reserves its future right-hand entry button. Opening it
-    // never shifts the artist name or suddenly culls the card that was clicked.
+    // Local entries reserve their button. Playlist headers are placed with
+    // enough room for their drawer before the first interaction.
     const rightEdge = retained.has(column.lane) ? 14 : 34;
-    if (column.x < labelWidth / 2 + edge || column.x > width - labelWidth / 2 - 76 - rightEdge ||
+    const { labelWidth } = overviewLabelPlacement(column, width, height);
+    if (column.x < labelWidth / 2 + edge || column.x > width - labelWidth / 2 - (column.playlist ? 0 : 76) - rightEdge ||
       column.y < 115 - (retained.has(column.lane) ? 20 : 0) ||
       column.y > height - 112 + (retained.has(column.lane) ? 20 : 0)) continue;
-    const left = column.x - labelWidth / 2, right = column.x + labelWidth / 2 +
-      (column.lane === expandedLane ? 76 : 0);
-    if (accepted.some((other) => left < other.x + labelWidth / 2 +
-      (other.lane === expandedLane ? 76 : 0) + 10 && right + 10 > other.x - labelWidth / 2 &&
-      Math.abs(other.y - column.y) < 62)) continue;
+    const bounds = (value: OverviewColumn) => {
+      const placed = overviewLabelPlacement(value, width, height);
+      const left = placed.x - (value.playlist ? placed.listWidth : placed.labelWidth) / 2, open = value.lane === expandedLane;
+      return { left, right: left + (value.playlist ? placed.listWidth : placed.labelWidth + (open ? 76 : 0)),
+        top: placed.y - 62, bottom: placed.y + (open && value.playlist ? placed.listHeight : 0) };
+    };
+    const box = bounds(column);
+    if (accepted.some((other) => {
+      const otherBox = bounds(other);
+      return box.left < otherBox.right + 10 && box.right + 10 > otherBox.left &&
+        box.top < otherBox.bottom && box.bottom > otherBox.top;
+    })) continue;
     accepted.push(column);
   }
   return accepted.sort((a, b) => a.x - b.x);
