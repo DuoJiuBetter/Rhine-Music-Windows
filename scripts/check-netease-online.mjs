@@ -3,9 +3,72 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { NeteaseOnline, neteaseMediaUrl } from './netease-online.mjs';
+import { createRequire } from 'node:module';
+import { NeteaseOnline, neteaseMediaUrl, sdkCall } from './netease-online.mjs';
 import { createMusicServer } from './music-server.mjs';
+import { onlineDiagnostic } from './online-diagnostics.mjs';
+const require = createRequire(import.meta.url);
+const { eapiReqDecrypt } = require('NeteaseCloudMusicApi/util/crypto.js');
 const song = { id: 123, name: '中文歌曲 <测试>', ar: [{ name: '歌手' }], al: { id: 45, name: '专辑', picUrl: 'https://p1.music.126.net/cover.jpg' }, dt: 240000, fee: 1 };
+
+test('large NetEase playlists request only a few embedded tracks while retaining every track ID', async () => {
+  const previousFetch = globalThis.fetch;
+  const trackIds = Array.from({ length: 943 }, (_, index) => ({ id: index + 1 }));
+  let requested;
+  globalThis.fetch = async (_url, init) => {
+    const encrypted = new URLSearchParams(init.body).get('params');
+    const decoded = eapiReqDecrypt(encrypted);
+    requested = decoded.data;
+    assert.equal(decoded.url, '/api/v6/playlist/detail');
+    const tracks = Array.from({ length: requested.n }, (_, index) => ({ id: index + 1, description: 'x'.repeat(3000) }));
+    return Response.json({ code: 200, playlist: { trackIds, tracks } });
+  };
+  try {
+    const result = await sdkCall('playlistDetail', { id: '2851221535', s: 0, cookie: {} });
+    assert.equal(requested.n, 10);
+    assert.equal(requested.s, 0);
+    assert.equal(result.body.playlist.trackIds.length, 943);
+    assert.equal(result.body.playlist.tracks.length, 10);
+
+    const api = new NeteaseOnline({
+      call: (method, params) => method === 'playlistDetail' ? sdkCall(method, params)
+        : Promise.resolve({ body: { code: 200, songs: params.ids.split(',').map(id => ({ ...song, id: Number(id) })) } }),
+      sessionStore: { load: async () => ({}), clear: async () => {}, save: async () => {} },
+    });
+    await api.auth.ready;
+    api.auth.cookie = { MUSIC_U: 'synthetic-session' };
+    api.auth.profile = { userId: '123' };
+    api.playlistEpoch = api.auth.epoch;
+    api.ownedPlaylists = new Map([['2851221535', { id: '2851221535' }]]);
+    api.playlistCache = new Map();
+    const first = await api.playlistTracks('2851221535');
+    const last = await api.playlistTracks('2851221535', 900);
+    assert.equal(first.total, 943);
+    assert.equal(first.tracks.length, 50);
+    assert.equal(last.tracks.length, 43);
+    assert.equal(last.tracks.at(-1)?.id, 'netease-943');
+    assert.ok(first.tracks.every(Boolean) && last.tracks.every(Boolean));
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test('playlist response budget is adjustable but remains bounded', async () => {
+  const previousFetch = globalThis.fetch, previousLimit = process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB;
+  globalThis.fetch = async () => Response.json({ code: 200, playlist: { trackIds: [], padding: 'x'.repeat(3 * 1024 * 1024) } });
+  try {
+    process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB = '2';
+    await assert.rejects(sdkCall('playlistDetail', { id: '123', cookie: {} }), failure => {
+      assert.match(failure.message, /歌单曲目过多/);
+      assert.equal(onlineDiagnostic(failure)?.code, 'NETEASE_RESPONSE_TOO_LARGE');
+      return true;
+    });
+    process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB = '4';
+    assert.equal((await sdkCall('playlistDetail', { id: '123', cookie: {} })).body.code, 200);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousLimit === undefined) delete process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB;
+    else process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB = previousLimit;
+  }
+});
 
 test('NetEase search preserves IDs, song metadata, pagination, and bounded cache', async () => {
   let calls = 0, now = 0;

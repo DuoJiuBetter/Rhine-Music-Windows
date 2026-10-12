@@ -8,6 +8,12 @@ import { diagnoseOnlineFailure, onlineDiagnostic, withOnlineDiagnostic } from '.
 import { traceOnlineRequest, onlineTransport } from './online-transport-trace.mjs';
 const require = createRequire(import.meta.url);
 const PAGE_SIZE = 20;
+const MIB = 1024 * 1024;
+const PLAYLIST_EMBEDDED_TRACKS = 10;
+const playlistResponseLimit = () => {
+  const configured = Number(process.env.RHINE_NETEASE_PLAYLIST_RESPONSE_LIMIT_MIB);
+  return Number.isInteger(configured) && configured >= 2 && configured <= 16 ? configured * MIB : 8 * MIB;
+};
 const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 240) : '';
 const error = (message, status = 502, cause) => Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { status });
 export function songId(value) {
@@ -62,6 +68,12 @@ export async function sdkCall(method, params, signal) {
     crypto: require('NeteaseCloudMusicApi/util/crypto.js') };
   const cookie = params.cookie || {};
   return sdk[method]({ ...params, cookie }, async (uri, data, options) => {
+    // The pinned SDK requests 100,000 embedded tracks even though our playlist
+    // pages only need the complete trackIds array. Keep its endpoint/protocol,
+    // but avoid downloading thousands of song details that we discard.
+    if (method === 'playlistDetail' && uri === '/api/v6/playlist/detail') {
+      data = { ...data, n: PLAYLIST_EMBEDDED_TRACKS, s: params.s ?? data.s };
+    }
     const header = { os: 'pc', appver: '3.1.17.204416', deviceId: params.deviceId || randomUUID(), versioncode: '140',
       resolution: '1920x1080', __csrf: cookie.__csrf || '', channel: 'netease', requestId: `${Date.now()}_0000`,
       ...(cookie.MUSIC_U ? { MUSIC_U: cookie.MUSIC_U } : {}), ...(cookie.MUSIC_A ? { MUSIC_A: cookie.MUSIC_A } : {}) };
@@ -76,9 +88,10 @@ export async function sdkCall(method, params, signal) {
     });
     if (!response.ok) throw withOnlineDiagnostic(error(response.status === 429 ? '网易云请求过于频繁，请稍后重试。' : response.status === 401 ? '网易云未授权本次请求，请检查登录状态。' : response.status === 403 ? '网易云拒绝了本次请求。' : '网易云暂时无法连接，请稍后重试。', response.status >= 400 && response.status < 500 ? response.status : 502), { operation: method, stage: 'http', code: `HTTP_${response.status}`, upstreamStatus: response.status });
     const chunks = []; let size = 0;
+    const responseLimit = method === 'playlistDetail' ? playlistResponseLimit() : 2 * MIB;
     for await (const chunk of response.body) {
       size += chunk.byteLength;
-      if (size > 2 * 1024 * 1024) { await response.body.cancel().catch(() => {}); throw withOnlineDiagnostic(error('网易云返回的数据过大。'), { operation: method, stage: 'response', code: 'RESPONSE_TOO_LARGE', upstreamStatus: response.status }); }
+      if (size > responseLimit) { await response.body.cancel().catch(() => {}); throw withOnlineDiagnostic(error(method === 'playlistDetail' ? '该歌单曲目过多，返回的列表超过读取上限。' : '网易云返回的数据过大。'), { operation: method, stage: 'response', code: 'RESPONSE_TOO_LARGE', upstreamStatus: response.status }); }
       chunks.push(chunk);
     }
     let body;
