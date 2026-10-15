@@ -8,7 +8,14 @@ const output = path.resolve('artifacts/benchmark');
 await fs.mkdir(output, { recursive: true });
 const native = Boolean(process.env.RHINE_CDP);
 const fixture = native ? null : await startFixture(process.env.RHINE_BENCH_DIST || 'dist');
-const browser = native ? await chromium.connectOverCDP(process.env.RHINE_CDP) : await chromium.launch({ executablePath: process.env.RHINE_BROWSER, headless: true });
+const browser = native ? await chromium.connectOverCDP(process.env.RHINE_CDP) : await chromium.launch({
+  executablePath: process.env.RHINE_BROWSER,
+  headless: true,
+  // Current Chromium builds refuse WebGL on the software rasterizer unless it is
+  // explicitly allowed, which leaves the benchmark unable to reach the app at all
+  // when no GPU is exposed to the headless browser.
+  args: (process.env.RHINE_BROWSER_ARGS || '--enable-unsafe-swiftshader').split(' ').filter(Boolean),
+});
 const nativePage = native ? browser.contexts()[0].pages()[0] : null;
 let nativeSession;
 if (native) {
@@ -20,7 +27,7 @@ if (native) {
   if (!state.fullscreen) await nativePage.evaluate(() => window.__TAURI__.core.invoke('desktop_window_action', { action: 'fullscreen' }));
 }
 const setMetrics = async () => { if (nativeSession) await nativeSession.send('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false }); };
-const origin = native ? new URL(nativePage.url()).origin : fixture.url;
+const origin = native ? new URL(nativePage.url()).origin : fixture.url.replace(/\/$/, '');
 const report = { at: new Date().toISOString(), note: 'Actual WebView2/Chromium on the current machine, NOT integrated-GPU certification. Synthetic 96-album library; original materials, effects and samples; drawing buffer explicitly capped at 1920×1080 (pixelRatio 1 for this benchmark only, because WebView2 native DPI overrides CDP DPR). Active navigation and idle measured separately. No forced software/GPU overrides.', runs: [] };
 try {
   for (const mode of ['reference', 'optimized']) {

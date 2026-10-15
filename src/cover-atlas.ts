@@ -97,8 +97,12 @@ export class CoverAtlas {
   private readonly atlasCanvas = document.createElement("canvas");
   private readonly selectedCanvas = document.createElement("canvas");
   private readonly tileCanvas = document.createElement("canvas");
+  // One staging strip spans a whole atlas row (every column, one tile high).
+  // Contiguous dirty columns leave it in a single texSubImage2D per run instead
+  // of one per tile; the staged pixels are byte-identical to the per-tile path.
   private readonly uploadCanvas = document.createElement("canvas");
   private readonly uploadTexture: THREE.Texture;
+  private readonly uploadRegion = new THREE.Box2();
   private readonly atlas: THREE.CanvasTexture;
   private readonly selectedTexture: THREE.CanvasTexture;
   private readonly pendingImages = new Map<string, Promise<DecodedCoverImage | undefined>>();
@@ -123,6 +127,7 @@ export class CoverAtlas {
   private gpuInitialized = false;
   private uploadedBytes = 0;
   private uploadBatches = 0;
+  private uploadCalls = 0;
   private uploadedTiles = 0;
   private peakDecodes = 0;
   private decodedPixels = 0;
@@ -154,7 +159,7 @@ export class CoverAtlas {
     this.atlasCanvas.height = this.rows * this.tileHeight;
     this.tileCanvas.width = this.tileWidth;
     this.tileCanvas.height = this.tileHeight;
-    this.uploadCanvas.width = this.tileWidth;
+    this.uploadCanvas.width = this.columns * this.tileWidth;
     this.uploadCanvas.height = this.tileHeight;
     // This CPU-only source is copied directly into a subregion of the atlas.
     // It must never be initialized as a separate GPU texture.
@@ -584,25 +589,69 @@ export class CoverAtlas {
     let uploaded = 0;
     const limit = Math.max(1, Math.min(64, Math.floor(maxTiles) || 8));
     this.lastUploadLimit = limit;
-    const candidates = budget ? budget.prioritySlots : this.dirtySlots;
-    for (const slot of candidates) {
-      if (!this.dirtySlots.has(slot)) continue;
-      const x = (slot % this.columns) * this.tileWidth;
-      const y = Math.floor(slot / this.columns) * this.tileHeight;
-      context.clearRect(0, 0, this.tileWidth, this.tileHeight);
-      context.drawImage(this.atlasCanvas, x, y, this.tileWidth, this.tileHeight, 0, 0, this.tileWidth, this.tileHeight);
-      // Canvas rows run downwards; WebGL destination origins run upwards.
-      destination.set(x, this.atlasCanvas.height - y - this.tileHeight);
-      renderer.copyTextureToTexture(this.uploadTexture, this.atlas, null, destination);
-      this.dirtySlots.delete(slot);
-      this.setReady(slot, 1);
-      this.uploadedBytes += this.tileWidth * this.tileHeight * 4;
-      this.uploadedTiles++;
-      if (++uploaded >= limit || (budget && performance.now() - start >= budget.timeBudgetMs)) break;
+    // Slots arrive scattered, but neighbours in one row are usually dirty
+    // together (a scroll band). Grouping them into column runs keeps the byte
+    // count identical while collapsing many driver copies into one.
+    for (const [row, runs] of this.dirtyRuns(budget?.prioritySlots)) {
+      for (const run of runs) {
+        const take = Math.min(run.length, limit - uploaded);
+        if (take <= 0) break;
+        const x = run[0] * this.tileWidth;
+        const y = row * this.tileHeight;
+        const width = take * this.tileWidth;
+        context.clearRect(x, 0, width, this.tileHeight);
+        context.drawImage(this.atlasCanvas, x, y, width, this.tileHeight, x, 0, width, this.tileHeight);
+        // Canvas rows run downwards; WebGL destination origins run upwards.
+        destination.set(x, this.atlasCanvas.height - y - this.tileHeight);
+        // The strip is one tile high, so the vertical flip covers exactly the
+        // rows of this band; only the horizontal offset is skipped.
+        this.uploadRegion.min.set(x, 0);
+        this.uploadRegion.max.set(x + width, this.tileHeight);
+        renderer.copyTextureToTexture(this.uploadTexture, this.atlas, this.uploadRegion, destination);
+        for (let index = 0; index < take; index++) {
+          const slot = row * this.columns + run[index];
+          this.dirtySlots.delete(slot);
+          this.setReady(slot, 1);
+        }
+        uploaded += take;
+        this.uploadedBytes += width * this.tileHeight * 4;
+        this.uploadedTiles += take;
+        this.uploadCalls++;
+        if (uploaded >= limit || (budget && performance.now() - start >= budget.timeBudgetMs)) break;
+      }
+      if (uploaded >= limit || (budget && performance.now() - start >= budget.timeBudgetMs)) break;
     }
     if (uploaded) { this.coverReady.needsUpdate = true; this.uploadBatches++; }
     this.lastUploadMs = performance.now() - start;
     return uploaded;
+  }
+
+  /** Dirty slots grouped by atlas row into runs of adjacent columns. */
+  private dirtyRuns(priority?: readonly number[]) {
+    const columnsByRow = new Map<number, number[]>();
+    const collect = (slot: number) => {
+      if (!this.dirtySlots.has(slot)) return;
+      const row = Math.floor(slot / this.columns);
+      const column = slot % this.columns;
+      const columns = columnsByRow.get(row);
+      if (!columns) columnsByRow.set(row, [column]);
+      else if (!columns.includes(column)) columns.push(column);
+    };
+    if (priority) for (const slot of priority) collect(slot);
+    else for (const slot of this.dirtySlots) collect(slot);
+    const runsByRow = new Map<number, number[][]>();
+    for (const [row, columns] of columnsByRow) {
+      columns.sort((a, b) => a - b);
+      const runs: number[][] = [];
+      let run: number[] = [];
+      for (const column of columns) {
+        if (run.length && column === run[run.length - 1] + 1) run.push(column);
+        else { if (run.length) runs.push(run); run = [column]; }
+      }
+      if (run.length) runs.push(run);
+      runsByRow.set(row, runs);
+    }
+    return runsByRow;
   }
 
   /** Bounded wait for the currently visible requests; no whole-library preload. */
@@ -631,6 +680,8 @@ export class CoverAtlas {
       preparedTiles: this.paintedTiles.size, preparedTileBytes: this.paintedTiles.size * this.tileWidth * this.tileHeight * 4,
       dirtyTiles: this.dirtySlots.size, uploadedTiles: this.uploadedTiles,
       uploadedBytes: this.uploadedBytes, uploadBatches: this.uploadBatches,
+      uploadCalls: this.uploadCalls,
+      uploadedTilesPerCall: this.uploadCalls ? +(this.uploadedTiles / this.uploadCalls).toFixed(2) : 0,
       gpuInitialized: this.gpuInitialized,
       visiblePrints: this.renderSlots.length, frameBudget: this.frameBudget,
       pendingPaints: this.pendingPaints.size, lastPrepared: this.lastPrepared,
