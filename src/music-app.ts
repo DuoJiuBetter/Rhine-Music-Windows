@@ -54,6 +54,7 @@ import type {
   MusicAlbum,
   MusicGenre,
   MusicLibrary,
+  MusicTrack,
   GenreRules,
 } from "./music-types";
 import { demoAlbums, demoGenres } from "./demo-library";
@@ -77,6 +78,9 @@ import { viewportLayout } from "./viewport-layout";
 import { setupLightingLab } from "./music-lighting-lab";
 import type { LightingLabController, LightingLabSettings } from "./music-lighting-lab";
 import { setupMotionLab } from "./music-motion-lab";
+import { applyLyricMotion, followLyricMotionPreview, getLyricMotion, handleLyricMotionClick, lyricMotionMarkup, normalizeLyricMotion, onLyricMotionChange, syncLyricMotionUi, type LyricMotion } from "./music-lyric-motion";
+import { normalizePlaybackOrder, playbackOrderMarkup, restoreQueueOrder, shuffledQueue, syncPlaybackOrderUi, type MusicPlaybackOrder } from "./music-playback-order";
+import { DEFAULT_MUSIC_SHORTCUTS, MUSIC_SHORTCUT_STEP_SECONDS, MUSIC_SHORTCUT_VOLUME_STEP, musicShortcutMarkup, normalizeMusicShortcuts, renderMusicShortcuts, resolveMusicShortcutCapture, setMusicShortcutStatus, shortcutActionForEvent, type MusicShortcutAction, type MusicShortcutBindings } from "./music-shortcuts";
 import { getMusicMotionSpeed, normalizeMusicMotionSpeed, onMusicMotionSpeedChange, setMusicMotionSpeed } from "./music-motion-settings";
 import { mountMusicWheelNavigation } from "./music-wheel-navigation";
 import { isDesktop } from "./desktop";
@@ -145,6 +149,9 @@ const preferences = {
     motionDebug: false,
     motionSpeed: 1,
     lighting: undefined as Partial<LightingLabSettings> | undefined,
+    lyricMotion: undefined as LyricMotion | undefined,
+    playbackOrder: undefined as MusicPlaybackOrder | undefined,
+    shortcuts: { ...DEFAULT_MUSIC_SHORTCUTS },
   },
   ...read<
     Partial<{
@@ -171,9 +178,15 @@ const preferences = {
       motionDebug: boolean;
       motionSpeed: number;
       lighting: Partial<LightingLabSettings>;
+      lyricMotion: LyricMotion;
+      playbackOrder: MusicPlaybackOrder;
+      shortcuts: MusicShortcutBindings;
     }>
   >("rhine-music-preferences", {}),
 };
+preferences.lyricMotion = normalizeLyricMotion(preferences.lyricMotion);
+preferences.playbackOrder = normalizePlaybackOrder(preferences.playbackOrder);
+preferences.shortcuts = normalizeMusicShortcuts(preferences.shortcuts);
 preferences.onlineErrorDisplay = preferences.onlineErrorDisplay === true;
 preferences.songTransition = normalizeSongTransition(preferences.songTransition, preferences.songFade);
 delete preferences.songFade;
@@ -289,6 +302,70 @@ const stage = $("#stage");
 stage.className = "music-app";
 stage.dataset.mode = "archive";
 stage.dataset.theme = preferences.theme;
+applyLyricMotion(stage, getLyricMotion());
+onLyricMotionChange((value) => {
+  preferences.lyricMotion = value;
+  applyLyricMotion(stage, value);
+  syncLyricMotionUi(document, value);
+  savePrefs();
+});
+player.setPlaybackOrder(preferences.playbackOrder);
+let shortcutCapture: MusicShortcutAction | null = null;
+/** One place where a shortcut becomes an effect; the settings screen and the key
+ * handler share it, so a binding can never mean two different things. */
+function runMusicShortcut(action: MusicShortcutAction) {
+  const state = playerState;
+  switch (action) {
+    case "previous": void player.previous(); return;
+    case "next": void player.next(); return;
+    case "toggle": void player.toggle(); return;
+    case "stop": player.stop(); return;
+    case "seekBack": player.seek(Math.max(0, state.currentTime - MUSIC_SHORTCUT_STEP_SECONDS)); return;
+    case "seekForward":
+      player.seek(Math.min(Math.max(state.duration, state.currentTime), state.currentTime + MUSIC_SHORTCUT_STEP_SECONDS));
+      return;
+    case "volumeDown": player.setVolume(Math.max(0, state.volume - MUSIC_SHORTCUT_VOLUME_STEP)); return;
+    case "volumeUp": player.setVolume(Math.min(1, state.volume + MUSIC_SHORTCUT_VOLUME_STEP)); return;
+    case "modeSequential":
+    case "modeLoopAll":
+    case "modeLoopOne":
+    case "modeShuffle": {
+      const mode = action.slice(4);
+      applyPlaybackOrder((mode[0].toLowerCase() + mode.slice(1)) as MusicPlaybackOrder);
+      return;
+    }
+  }
+}
+function beginMusicShortcutCapture(action: MusicShortcutAction) {
+  shortcutCapture = action;
+  renderMusicShortcuts(document, preferences.shortcuts, action);
+}
+function finishMusicShortcutCapture(bindings: MusicShortcutBindings, status: string) {
+  shortcutCapture = null;
+  preferences.shortcuts = bindings;
+  savePrefs();
+  renderMusicShortcuts(document, preferences.shortcuts, null);
+  setMusicShortcutStatus(document, status);
+}
+// Authored queue order, remembered so leaving shuffle restores it exactly.
+let authoredQueue: readonly MusicTrack[] = [];
+function applyPlaybackOrder(value: MusicPlaybackOrder) {
+  const order = normalizePlaybackOrder(value);
+  if (order === preferences.playbackOrder) return;
+  const previous = preferences.playbackOrder;
+  preferences.playbackOrder = order;
+  if (order === "shuffle") {
+    player.setPlaybackOrder(order);
+    player.setQueue(shuffledQueue(authoredQueue.length ? authoredQueue : playerState.queue, playerState.currentTrack?.id));
+  } else {
+    // Restore the authored order before the state stops reporting shuffle, so
+    // the bookkeeping below cannot mistake the shuffled queue for the authored one.
+    if (previous === "shuffle" && authoredQueue.length) player.setQueue(authoredQueue);
+    player.setPlaybackOrder(order);
+  }
+  syncPlaybackOrderUi(document, order);
+  savePrefs();
+}
 stage.innerHTML = `
   <div id="three-scene" class="three-scene"></div>
   <div class="music-vignette" aria-hidden="true"></div>
@@ -298,7 +375,7 @@ stage.innerHTML = `
       <button data-action="search" aria-label="搜索">${icons.search}<span>搜索</span></button>
       <button data-action="playlists" id="my-playlists-button" hidden aria-label="我的歌单">${icons.folder}<span>我的歌单</span></button>
       <button data-action="settings" class="icon-button" aria-label="设置">${icons.settings}</button>
-      <div class="minimal-transport" role="group" aria-label="音乐播放"><button type="button" data-action="locate-playing" id="transport-track" class="transport-track" aria-label="定位当前歌曲" aria-hidden="true" disabled><span id="transport-track-label"></span></button><button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button><div class="mini-playback-below" id="mini-playback-below" data-song="" hidden><span data-mini-lyric></span><input class="playback-seek" type="range" min="0" max="1" value="0" step="0.1" aria-label="歌曲播放进度" disabled></div></div>
+      <div class="minimal-transport" role="group" aria-label="音乐播放"><span class="playback-order-buttons" role="radiogroup" aria-label="播放顺序">${playbackOrderMarkup()}</span><button type="button" data-action="locate-playing" id="transport-track" class="transport-track" aria-label="定位当前歌曲" aria-hidden="true" disabled><span id="transport-track-label"></span></button><button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button><div class="mini-playback-below" id="mini-playback-below" data-song="" hidden><span data-mini-lyric></span><input class="playback-seek" type="range" min="0" max="1" value="0" step="0.1" aria-label="歌曲播放进度" disabled></div></div>
       <button data-action="netease-login" id="netease-login-button" aria-label="登录">${icons.account}<span>登录</span></button>
     </nav>
   </header>
@@ -1796,6 +1873,9 @@ player.subscribe((state) => {
   transport.dataset.transport = state.transport;
   transport.dataset.position = String(state.currentTime);
   transport.dataset.duration = String(state.duration);
+  // While not shuffling, the live queue is the authored order.
+  if (state.playbackOrder !== "shuffle" && state.queue.length) authoredQueue = [...state.queue];
+  syncPlaybackOrderUi(transport, state.playbackOrder);
   const titleVisible = !!state.currentTrack &&
     (state.transport === "playing" || state.transport === "paused" || state.transport === "loading");
   transportTitleMotion.update(state.currentTrack?.title ?? "", titleVisible);
@@ -2075,6 +2155,8 @@ function renderSettingsPanel() {
     ${qualityMarkup(renderQuality)}</section>
     <section class="panel-section" data-settings-group="display"><h3>玻璃遮挡优化</h3><label class="settings-row"><span>可见区域绘制</span><select id="glass-occlusion" aria-label="玻璃遮挡优化"><option value="on" ${glassOcclusionMode === "on" ? "selected" : ""}>开启遮挡优化</option><option value="off" ${glassOcclusionMode === "off" ? "selected" : ""}>关闭 · Perf6 对照</option><option value="debug" ${glassOcclusionMode === "debug" ? "selected" : ""}>三类区域调试</option></select></label><button class="text-button" data-action="copy-performance">复制性能诊断 ↗</button></section>
     <section class="panel-section" data-settings-group="developer"><h3>在线错误调试</h3><label class="settings-row"><span>显示详细报错</span><input type="checkbox" id="online-error-display" ${preferences.onlineErrorDisplay ? "checked" : ""}></label><button class="text-button" data-action="show-online-errors" ${preferences.onlineErrorDisplay ? "" : "disabled"}>查看 / 复制报错</button><button class="text-button" data-action="copy-performance">复制性能诊断 ↗</button></section>
+    ${musicShortcutMarkup()}
+    ${lyricMotionMarkup()}
     <section class="panel-section" data-settings-group="appearance"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果</span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label></section><section class="panel-section" data-settings-group="display"><h3>窗口</h3><button class="text-button" data-action="fullscreen">最大化 / 还原 ↗</button></section><section class="panel-section" data-settings-group="developer"><h3>界面维护</h3><button class="text-button" data-action="replay-boot">重播开场 ↗</button><button class="text-button" data-action="reload-interface">重新载入界面 ↻</button></section>
     <section class="panel-section" data-settings-group="appearance"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>歌曲衔接</span><select id="song-fade-setting" aria-label="歌曲衔接方式"><option value="fade-out" ${preferences.songTransition === "fade-out" ? "selected" : ""}>淡出但不淡入</option><option value="fade-in-out" ${preferences.songTransition === "fade-in-out" ? "selected" : ""}>淡出淡入</option><option value="gapless" ${preferences.songTransition === "gapless" ? "selected" : ""}>无缝播放</option></select></label><label class="settings-row"><span>界面音效</span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM</span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
     <details class="panel-section" id="musicbrainz-settings" data-settings-group="local"><summary>高级设置 · MusicBrainz</summary><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><div id="online-config"></div></details>
@@ -2094,6 +2176,9 @@ function renderSettingsPanel() {
   $<HTMLTextAreaElement>('#feedback-description').value = feedbackDescription;
   groupSettingsContent($("#panel-body"));
   selectSettingsCategory($("#music-panel-root"), settingsCategory);
+  syncLyricMotionUi(document, getLyricMotion());
+  renderMusicShortcuts(document, preferences.shortcuts, shortcutCapture);
+  followLyricMotionPreview(document);
   refreshFeedbackReport();
   const feedbackDetails = document.querySelector<HTMLDetailsElement>('.feedback-diagnostics');
   feedbackDetails?.addEventListener('toggle', () => { if (feedbackDetails.open) refreshFeedbackReport(); });
@@ -2306,6 +2391,23 @@ document.addEventListener("click", (e) => {
   if (target.dataset.action === "dismiss-panel" && e.target !== target) return;
   if (target.dataset.theme) {
     setTheme(target.dataset.theme as Theme);
+    return;
+  }
+  if (handleLyricMotionClick(target)) return;
+  if (target.dataset.playbackOrder) {
+    applyPlaybackOrder(target.dataset.playbackOrder as MusicPlaybackOrder);
+    return;
+  }
+  if (target.dataset.shortcutAction) {
+    beginMusicShortcutCapture(target.dataset.shortcutAction as MusicShortcutAction);
+    return;
+  }
+  if (target.dataset.shortcutReset !== undefined) {
+    finishMusicShortcutCapture({ ...DEFAULT_MUSIC_SHORTCUTS }, "已恢复默认绑定");
+    return;
+  }
+  if (target.dataset.shortcutClear !== undefined) {
+    finishMusicShortcutCapture({}, "已清空全部绑定");
     return;
   }
   if (target.dataset.track) {
@@ -2726,6 +2828,24 @@ document.addEventListener("change", (e) => {
 document.addEventListener("keydown", (e) => {
   if (boot?.active) return;
   if (viewer?.isOpen) return;
+  // User shortcuts get the first refusal. While a binding is being captured the
+  // next key belongs to that capture — including Esc and Backspace.
+  if (shortcutCapture) {
+    const result = resolveMusicShortcutCapture(preferences.shortcuts, shortcutCapture, e);
+    e.preventDefault();
+    if (result.done) finishMusicShortcutCapture(result.bindings, result.status);
+    else {
+      setMusicShortcutStatus(document, result.status);
+      renderMusicShortcuts(document, preferences.shortcuts, shortcutCapture);
+    }
+    return;
+  }
+  const shortcut = shortcutActionForEvent(preferences.shortcuts, e, e.target);
+  if (shortcut) {
+    e.preventDefault();
+    runMusicShortcut(shortcut);
+    return;
+  }
   if (e.key === "Escape") {
     playlistOverviewRequested = false;
     panel ? closePanel() : overview ? setOverview(false) : setMode("archive");

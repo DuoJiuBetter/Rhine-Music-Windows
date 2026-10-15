@@ -75,3 +75,19 @@
 .music-app.reduce-motion .song-step-buttons button svg { transition: none; }
 .music-app.reduce-motion .playback-seek::-webkit-slider-thumb { transition: none; }
 .music-app.reduce-motion .playback-seek::-moz-range-thumb { transition: none; }
+
+/* 歌词切换动画（个性化 → 歌词切换动画）。基础时长由模块写入
+   --lyric-motion-duration，再按全局动效速度 --music-motion-scale 缩放，
+   与软件其它过渡保持一致。只过渡合成友好属性、不动字号，避免布局抖动。 */
+.music-app .lyric-line {
+  transition:
+    opacity calc(var(--lyric-motion-duration, 320ms) * var(--music-motion-scale, 1)) cubic-bezier(.22, 1, .36, 1),
+    color calc(var(--lyric-motion-duration, 320ms) * var(--music-motion-scale, 1)) cubic-bezier(.22, 1, .36, 1),
+    transform calc(var(--lyric-motion-duration, 320ms) * var(--music-motion-scale, 1)) cubic-bezier(.22, 1, .36, 1);
+}
+.music-app[data-lyric-motion="none"] .lyric-line { transition: none; }
+.music-app[data-lyric-motion="slide"] .lyric-line { transform: translateY(10px); }
+.music-app[data-lyric-motion="slide"] .lyric-line.current { transform: translateY(0); }
+.music-app[data-lyric-motion="zoom"] .lyric-line { transform: scale(.955); transform-origin: left center; }
+.music-app[data-lyric-motion="zoom"] .lyric-line.current { transform: scale(1); }
+.music-app.reduce-motion .lyric-line { transition: none; }

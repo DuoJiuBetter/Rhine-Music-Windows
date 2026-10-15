@@ -3,6 +3,7 @@ import { fetchOnline, reportOnlineFailure } from './online-debug.ts';
 import type { MusicTrack } from "./music-types";
 import { normalizeSongTransition, type SongTransitionMode } from "./music-song-transition.ts";
 import { AudioClockSuspended, BrowserGaplessPlayer } from "./music-browser-gapless.ts";
+import { DEFAULT_PLAYBACK_ORDER, normalizePlaybackOrder, predecessorIndex, successorIndex, type MusicPlaybackOrder } from "./music-playback-order.ts";
 
 export interface AudioOutputDevice { id: string; name: string }
 export interface AudioCapabilities {
@@ -24,6 +25,8 @@ export interface MusicPlayerState {
   currentTrack: MusicTrack | null;
   queue: readonly MusicTrack[];
   currentIndex: number;
+  /** Playback order lives in player state so every surface renders one source. */
+  playbackOrder: MusicPlaybackOrder;
   playing: boolean;
   loading: boolean;
   duration: number;
@@ -126,6 +129,7 @@ export class MusicPlayer {
       currentTrack: null,
       queue: [],
       currentIndex: -1,
+      playbackOrder: DEFAULT_PLAYBACK_ORDER,
       playing: false,
       loading: false,
       duration: 0,
@@ -512,9 +516,9 @@ export class MusicPlayer {
       if (operation !== this.operation || this.disposed) return;
     }
     void this.gapless?.trackId;
-    const track = this.value.queue[this.value.currentIndex + 1];
-    if (track) await this.play(track.id);
-    else this.stop();
+    const index = successorIndex(this.value.playbackOrder, this.value.currentIndex, this.value.queue.length, false);
+    if (index === null) this.stop();
+    else await this.play(this.value.queue[index].id);
   }
 
   async previous(): Promise<void> {
@@ -528,7 +532,8 @@ export class MusicPlayer {
       this.seek(0);
       return;
     }
-    const track = this.value.queue[Math.max(0, this.value.currentIndex - 1)];
+    const index = predecessorIndex(this.value.playbackOrder, this.value.currentIndex, this.value.queue.length);
+    const track = index === null ? undefined : this.value.queue[index];
     if (track) {
       if (track.id === this.value.currentTrack?.id) this.seek(0);
       await this.play(track.id);
@@ -761,7 +766,7 @@ export class MusicPlayer {
       this.value.playing = false;
       this.value.loading = false;
       this.value.currentTime = this.value.duration;
-      const next = this.value.queue[this.value.currentIndex + 1];
+      const next = this.successor();
       if (next) {
         // No idle intermediate state, so BGM never appears between songs.
         void this.play(next.id);
@@ -938,7 +943,7 @@ export class MusicPlayer {
         },
         ended: () => {
           if (this.disposed || this.value.backend !== "browser" || this.transport !== "playing") return;
-          const next = this.value.queue[this.value.currentIndex + 1];
+          const next = this.successor();
           if (next) { this.gaplessWarning(); void this.play(next.id); }
           else {
             this.transport = "idle"; this.value.playing = false;
@@ -975,9 +980,25 @@ export class MusicPlayer {
     } finally { if (this.preparation === controller) this.preparation = undefined; }
   }
 
+  /** The track the current order plays after this one, if any. Shared by the
+   * natural end of a song and the gapless pre-schedule so both agree. */
+  private successor() {
+    const index = successorIndex(this.value.playbackOrder, this.value.currentIndex, this.value.queue.length, true);
+    return index === null ? undefined : this.value.queue[index];
+  }
+
+  /** Order is state, not a queue rewrite: shuffling remains the caller's job. */
+  setPlaybackOrder(order: MusicPlaybackOrder): void {
+    const next = normalizePlaybackOrder(order);
+    if (this.disposed || next === this.value.playbackOrder) return;
+    this.value.playbackOrder = next;
+    this.prepareSuccessor();
+    this.emit();
+  }
+
   private prepareSuccessor(): void {
     if (this.disposed || this.value.songTransitionMode !== "gapless" || this.gaplessFallback || this.transport !== "playing") return;
-    const next = this.value.queue[this.value.currentIndex + 1];
+    const next = this.successor();
     const operation = this.operation;
     if (this.value.backend === "browser") {
       void this.gapless?.prepareNext(next).catch(error => {
@@ -989,7 +1010,7 @@ export class MusicPlayer {
       const generation = this.nativePrepareGeneration;
       void cancelled.then(() => {
         if (generation !== this.nativePrepareGeneration || this.disposed || operation !== this.operation) return;
-        const next = this.value.queue[this.value.currentIndex + 1];
+        const next = this.successor();
         if (!next) return;
         this.nativePreparedId = next.id;
         return this.nativeCommand({ action: "prepareNext", trackId: next.id, afterTrackId: this.value.currentTrack?.id });
@@ -1083,7 +1104,7 @@ export class MusicPlayer {
           this.value.playing = state.playing;
           if (state.endedSerial !== this.nativeEndedSerial && this.transport === "playing") {
             this.nativeEndedSerial = state.endedSerial;
-            const next = this.value.queue[this.value.currentIndex + 1];
+            const next = this.successor();
             if (next) {
               if (this.value.songTransitionMode === "gapless") this.gaplessWarning();
               void this.play(next.id);
