@@ -15,6 +15,24 @@ export const COVER_PAINT_SIZE = 1024;
 export const COVER_INSET = 1 / 64;
 const COVER_PAINT_MARGIN = COVER_PAINT_SIZE * COVER_INSET;
 
+/** Decoded covers are RAM, so the cache stays bounded at every tier. A device
+ * that already renders at a high pixel budget can afford to keep more thumbnails
+ * instead of evicting and re-decoding them while the array is browsed. */
+export type CoverDecodeBudget = { decodedPixels: number; decodedImages: number };
+
+export const DEFAULT_DECODE_BUDGET: CoverDecodeBudget = {
+  decodedPixels: 12 * 1024 * 1024,
+  decodedImages: 192,
+};
+
+export function coverDecodeBudget(pixelBudget: number): CoverDecodeBudget {
+  if (!Number.isFinite(pixelBudget) || pixelBudget <= 1_440_000)
+    return { ...DEFAULT_DECODE_BUDGET };
+  if (pixelBudget <= 2_073_600)
+    return { decodedPixels: 16 * 1024 * 1024, decodedImages: 256 };
+  return { decodedPixels: 24 * 1024 * 1024, decodedImages: 384 };
+}
+
 export function containCover(
   width: number,
   height: number,
@@ -132,7 +150,8 @@ export class CoverAtlas {
   private peakDecodes = 0;
   private decodedPixels = 0;
   private readonly maxDecodeConcurrency = 3;
-  private readonly maxDecodedPixels = 12 * 1024 * 1024;
+  private maxDecodedPixels = DEFAULT_DECODE_BUDGET.decodedPixels;
+  private maxDecodedImages = DEFAULT_DECODE_BUDGET.decodedImages;
   private prefetchRequests = 0;
   private prefetchHits = 0;
   private readonly slotKeys: (string | undefined)[];
@@ -147,7 +166,8 @@ export class CoverAtlas {
   private readonly tileWidth: number;
   private readonly tileHeight: number;
 
-  constructor(count: number, maxTextureSize: number, anisotropy: number, lighting?: MusicSelectionLighting, backgroundTileSize = 256, clarity?: CoverClarityState) {
+  constructor(count: number, maxTextureSize: number, anisotropy: number, lighting?: MusicSelectionLighting, backgroundTileSize = 256, clarity?: CoverClarityState, decodeBudget: CoverDecodeBudget = DEFAULT_DECODE_BUDGET) {
+    this.setDecodeBudget(decodeBudget);
     this.rows = Math.ceil(count / this.columns);
     this.tileWidth = Math.min(
       Math.min(256, Math.max(64, backgroundTileSize)),
@@ -331,7 +351,7 @@ export class CoverAtlas {
             this.decodedImages.delete(job.url);
             this.decodedImages.set(job.url, decoded);
             this.decodedPixels += decoded?.pixels ?? 0;
-            while (this.decodedImages.size > 192 || this.decodedPixels > this.maxDecodedPixels) {
+            while (this.decodedImages.size > this.maxDecodedImages || this.decodedPixels > this.maxDecodedPixels) {
               const first = this.decodedImages.keys().next().value!;
               this.decodedPixels -= this.decodedImages.get(first)?.pixels ?? 0;
               this.decodedImages.delete(first);
@@ -626,6 +646,12 @@ export class CoverAtlas {
     return uploaded;
   }
 
+  /** Applies a bounded budget; lowering it evicts as decoding continues. */
+  setDecodeBudget(budget: CoverDecodeBudget) {
+    this.maxDecodedPixels = Math.max(2 * 1024 * 1024, Math.floor(budget.decodedPixels));
+    this.maxDecodedImages = Math.max(32, Math.floor(budget.decodedImages));
+  }
+
   /** Dirty slots grouped by atlas row into runs of adjacent columns. */
   private dirtyRuns(priority?: readonly number[]) {
     const columnsByRow = new Map<number, number[]>();
@@ -674,7 +700,7 @@ export class CoverAtlas {
       activeDecodes: this.activeJobs.size, queuedDecodes: this.decodeQueue.length,
       pendingImages: this.pendingImages.size, peakDecodes: this.peakDecodes,
       cachedImages: this.decodedImages.size, cachedBytes: this.decodedPixels * 4,
-      cacheLimitBytes: this.maxDecodedPixels * 4, cacheLimitImages: 192,
+      cacheLimitBytes: this.maxDecodedPixels * 4, cacheLimitImages: this.maxDecodedImages,
       prefetchRequests: this.prefetchRequests, prefetchHits: this.prefetchHits,
       prefetchQueueLimit: 32,
       preparedTiles: this.paintedTiles.size, preparedTileBytes: this.paintedTiles.size * this.tileWidth * this.tileHeight * 4,

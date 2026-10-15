@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
 import * as THREE from "three";
-import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, containCover, paintCover } from "../src/cover-atlas.ts";
+import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, DEFAULT_DECODE_BUDGET, containCover, coverDecodeBudget, paintCover } from "../src/cover-atlas.ts";
 import { CoverClarityState } from '../src/cover-clarity-pass.ts';
 
 // Deterministic image decode/canvas harness exercises production ownership and
@@ -306,7 +306,40 @@ try {
   speculative.dispose();
   atlas.dispose();
   snapshot.material.map.dispose(); snapshot.material.dispose();
-  console.log("Cover pipeline passed: shared UV/painter, bounded decode and ahead queue, warm focus art, stale prefetch cancellation, 48 MiB cache cap, partial uploads, recycled slot safety and reset/dispose.");
+
+  // Decode budgets follow the pixel budget that already encodes the device tier,
+  // stay bounded at every tier, and change how much browsing survives eviction.
+  assert.deepEqual(coverDecodeBudget(1_440_000), DEFAULT_DECODE_BUDGET);
+  assert.deepEqual(coverDecodeBudget(0), DEFAULT_DECODE_BUDGET, "an unknown budget keeps the low tier");
+  const entryBudget = coverDecodeBudget(2_073_600), discreteBudget = coverDecodeBudget(3_686_400);
+  assert.ok(entryBudget.decodedPixels > DEFAULT_DECODE_BUDGET.decodedPixels);
+  assert.ok(discreteBudget.decodedPixels > entryBudget.decodedPixels);
+  assert.ok(discreteBudget.decodedPixels * 4 <= 128 * 1024 ** 2, "even the largest tier stays bounded");
+  const tiered = new CoverAtlas(64, 8192, 16, undefined, 256, undefined, discreteBudget);
+  assert.equal(tiered.getStats().cacheLimitBytes, discreteBudget.decodedPixels * 4);
+  assert.equal(tiered.getStats().cacheLimitImages, discreteBudget.decodedImages);
+  tiered.setDecodeBudget({ decodedPixels: 1024, decodedImages: 1 });
+  assert.equal(tiered.getStats().cacheLimitBytes, 8 * 1024 ** 2, "a tiny budget is clamped to a usable floor");
+  assert.equal(tiered.getStats().cacheLimitImages, 32);
+  tiered.dispose();
+  const survivors = async (budget) => {
+    const candidate = new CoverAtlas(64, 8192, 16, undefined, 256, undefined, budget);
+    for (let i = 0; i < 260; i++) candidate.setSlot(i % 64, record(`tier-${i}`));
+    for (let guard = 0; guard < 400 && candidate.getStats().pendingImages; guard++) {
+      for (const [url, entry] of [...pending]) if (url.startsWith("cover-tier-")) entry.resolve();
+      await flush();
+    }
+    const stats = candidate.getStats();
+    candidate.dispose();
+    return stats;
+  };
+  const lowTier = await survivors(coverDecodeBudget(1_440_000));
+  const highTier = await survivors(discreteBudget);
+  assert.equal(lowTier.cachedImages, 192, "the low tier stops at its bounded cache");
+  assert.ok(highTier.cachedImages > lowTier.cachedImages,
+    `a tiered budget keeps more thumbnails available (${lowTier.cachedImages} → ${highTier.cachedImages})`);
+  assert.ok(highTier.cachedBytes > lowTier.cachedBytes);
+  console.log("Cover pipeline passed: shared UV/painter, bounded decode and ahead queue, warm focus art, stale prefetch cancellation, tiered and capped decode cache, batched partial uploads, recycled slot safety and reset/dispose.");
 } finally {
   globalThis.document = previousDocument; globalThis.Image = previousImage;
 }
