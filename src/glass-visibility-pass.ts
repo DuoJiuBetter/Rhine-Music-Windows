@@ -142,6 +142,8 @@ export class GlassVisibilityRenderPass extends RenderPass {
   private frames = 0;
   private depthFrames = 0;
   private analysisFrames = 0;
+  private analysisFrame = 0;
+  private deferredAnalyses = 0;
   private depthDraws = 0;
   private glassInstances = 0;
   private depthTriangles = 0;
@@ -254,9 +256,12 @@ export class GlassVisibilityRenderPass extends RenderPass {
       this.scene.background = null;
       this.clear = false;
       this.measure("sceneWithShadowsAndTransmission", () => super.render(renderer, write, read, deltaTime, maskActive));
-      if (this.mode === "debug" || this.frames % 256 === 64) {
-        try { this.measure("glassVisibilityAnalysis", () => this.analyze(renderer, read)); }
-        catch {
+      if (this.mode === "debug" || this.analysisDue()) {
+        let sampled = false;
+        try {
+          this.measure("glassVisibilityAnalysis", () => { sampled = this.analyze(renderer, read); });
+          if (sampled) this.analysisFrame = this.frames;
+        } catch {
           // Optional diagnostics must never interrupt playback/rendering.
           this.analysisAvailable = false; this.analysisError = "area-analysis-unavailable";
         }
@@ -272,12 +277,25 @@ export class GlassVisibilityRenderPass extends RenderPass {
     }
   }
 
-  private analyze(renderer: THREE.WebGLRenderer, read: THREE.WebGLRenderTarget) {
-    if (this.pendingRead && this.mode !== "debug") return;
+  /** The area estimate only feeds diagnostics, yet sampling it costs ~8 ms of CPU
+   * on one frame. That spike used to land on whichever frame happened to hit the
+   * interval, including the tightest 60 fps navigation frames. Moving frames now
+   * defer the sample — the estimate is already documented as uncertain while the
+   * array moves — and it runs on an idle frame instead. A starvation bound keeps
+   * a long continuous transition from freezing the estimate forever. */
+  private analysisDue() {
+    if (this.frames % 256 !== 64) return false;
+    if (!this.moving || this.frames - this.analysisFrame >= 1536) return true;
+    this.deferredAnalyses++;
+    return false;
+  }
+
+  private analyze(renderer: THREE.WebGLRenderer, read: THREE.WebGLRenderTarget): boolean {
+    if (this.pendingRead && this.mode !== "debug") return false;
     if (this.analysisAvailable === null)
       this.analysisAvailable = renderer.extensions.has("EXT_color_buffer_float") &&
         renderer.extensions.has("EXT_float_blend");
-    if (!this.analysisAvailable || !read.depthTexture || this.disposed) return;
+    if (!this.analysisAvailable || !read.depthTexture || this.disposed) return false;
     const started = performance.now();
     if (!this.depthSnapshot || this.depthSnapshot.width !== read.width || this.depthSnapshot.height !== read.height) {
       this.depthSnapshot?.dispose(); this.analysisTarget?.dispose(); this.generation++;
@@ -351,6 +369,7 @@ export class GlassVisibilityRenderPass extends RenderPass {
       renderer.shadowMap.autoUpdate = shadowAuto; renderer.shadowMap.needsUpdate = shadowDirty;
       renderer.setRenderTarget(read);
       this.lastAnalysisCpuMs = +(performance.now() - started).toFixed(3);
+      return true;
     }
   }
 
@@ -376,6 +395,7 @@ export class GlassVisibilityRenderPass extends RenderPass {
       depthTriangles: this.depthTriangles, fullGlassTriangles: this.fullGlassTriangles,
       depthGeometry: "exact-front-cap-triangle-subset",
       analysisFrames: this.analysisFrames, lastAnalysisCpuMs: this.lastAnalysisCpuMs,
+      analysisDeferred: this.deferredAnalyses, analysisFrame: this.analysisFrame,
       areaEstimate: this.area, areaEstimateIsLayerSamples: true,
       areaSampleIntervalFrames: 256,
       analysisAvailable: this.analysisAvailable, analysisError: this.analysisError,

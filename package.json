@@ -10,6 +10,7 @@
     "desktop:dev": "npm run desktop:prepare && tauri dev --no-dev-server",
     "check:windows": "node --experimental-strip-types --test scripts/check-windows.mjs",
     "check:gpu-budget": "node --experimental-strip-types --test scripts/check-gpu-budget.mjs",
+    "check:glass": "node --test scripts/check-glass-visibility.mjs",
     "check:online": "node --experimental-strip-types --test scripts/check-netease-online.mjs scripts/check-netease-auth.mjs scripts/check-playback-albums.mjs scripts/check-netease-playlists.mjs && node scripts/check-online-ui.mjs",
     "check:playback": "node scripts/check-playback-ui.mjs",
     "check:online:live": "node scripts/check-online-desktop.mjs",
