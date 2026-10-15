@@ -161,3 +161,27 @@ test("asynchronous area samples are bounded, detach depth and reject stale mode 
   assert.equal(f.renderer.autoClearDepth, true);
   f.pass.dispose();
 });
+
+test("area sampling defers off moving frames, then refreshes on an idle frame", async () => {
+  const f = fixture();
+  const calls = [];
+  f.renderer.extensions.has = () => true;
+  f.renderer.initRenderTarget = () => calls.push("init");
+  f.renderer.copyTextureToTexture = () => calls.push("depth-blit");
+  f.renderer.readRenderTargetPixelsAsync = (_target, _x, _y, _w, _h, data) => {
+    calls.push("read"); return Promise.resolve(data);
+  };
+  f.pass.frames = 63;
+  f.pass.moving = true;
+  f.pass.render(f.renderer, f.read, f.read, .016, false);
+  assert.deepEqual(calls, [], "a moving sample touches neither the depth snapshot nor the area readback");
+  assert.equal(f.pass.getStats().analysisFrames, 0);
+  assert.equal(f.pass.getStats().analysisDeferred, 1);
+  assert.equal(f.pass.getStats().depthFrames, 1, "the occlusion depth prepass itself still runs while moving");
+  f.pass.moving = false;
+  for (let i = 0; i < 256; i++) f.pass.render(f.renderer, f.read, f.read, .016, false);
+  assert.equal(f.pass.getStats().analysisFrames, 1, "the next idle sampling frame refreshes the estimate");
+  assert.equal(f.pass.getStats().analysisDeferred, 1, "an idle sampling frame is not counted as deferred");
+  assert.ok(calls.includes("read"), "the deferred frame was not lost, only postponed");
+  f.pass.dispose();
+});

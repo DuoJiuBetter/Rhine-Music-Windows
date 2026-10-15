@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
 import * as THREE from "three";
-import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, containCover, paintCover } from "../src/cover-atlas.ts";
+import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, DEFAULT_DECODE_BUDGET, containCover, coverDecodeBudget, paintCover } from "../src/cover-atlas.ts";
 import { CoverClarityState } from '../src/cover-clarity-pass.ts';
 
 // Deterministic image decode/canvas harness exercises production ownership and
@@ -141,7 +141,9 @@ try {
     initTexture: texture => allocations.push({ ready: texture.source.dataReady, version: texture.version }),
     copyTextureToTexture: (source, destination, region, position) => copies.push({
       token: source.image.token, position: position.toArray(),
-      width: source.image.width, height: source.image.height, region,
+      width: source.image.width, height: source.image.height,
+      region: region ? { min: region.min.toArray(), max: region.max.toArray() } : null,
+      drawn: source.image.calls.filter(call => call[0] === "draw").at(-1),
     }),
   };
   const versionBefore = cold.array.material.map.version;
@@ -154,7 +156,50 @@ try {
   assert.equal(cold.flushUploads(renderer), 8);
   assert.deepEqual(allocations, [{ ready: false, version: versionBefore }], "initial GPU storage is allocated without uploading the 108 MiB canvas");
   assert.deepEqual(copies[0].position, [0, 6656], "top canvas row maps to the top WebGL tile");
-  assert.deepEqual(copies[7].position, [1792, 6656]);
+  assert.equal(copies.length, 1, "eight adjacent dirty columns leave in one atlas copy");
+  assert.deepEqual(copies[0].region, { min: [0, 0], max: [2048, 256] }, "the run covers exactly the eight dirty columns");
+  assert.deepEqual(copies[0].drawn.slice(2), [0, 0, 2048, 256, 0, 0, 2048, 256], "the staged strip is the same atlas band the run uploads");
+  assert.equal(cold.getStats().uploadCalls, 1);
+  assert.equal(cold.getStats().uploadedTiles, 8);
+  assert.equal(cold.getStats().uploadedTilesPerCall, 8, "batched uploads are visible in the diagnostics");
+  // Batching must move exactly the dirty tiles: adjacent columns share one copy,
+  // scattered columns keep their own, and nothing is skipped, repeated or padded.
+  const batched = new CoverAtlas(64, 8192, 16);
+  const batchCopies = [];
+  const batchRenderer = {
+    initTexture: () => {},
+    copyTextureToTexture: (source, destination, region, position) => batchCopies.push({
+      token: source.image.token,
+      drawn: source.image.calls.filter(call => call[0] === "draw").at(-1).slice(2),
+      region: { min: region.min.toArray(), max: region.max.toArray() },
+      position: position.toArray(),
+    }),
+  };
+  const dirtySlots = [0, 1, 2, 5, 16, 17, 33, 47, 63];
+  for (const slot of dirtySlots) batched.setSlot(slot, record(`batch-${slot}`));
+  for (const slot of dirtySlots) { pending.get(`cover-batch-${slot}`).resolve(); await flush(); }
+  await flush();
+  assert.equal(batched.getStats().dirtyTiles, dirtySlots.length);
+  assert.equal(batched.flushUploads(batchRenderer, 64), dirtySlots.length);
+  assert.equal(batched.getStats().dirtyTiles, 0);
+  assert.equal(batchCopies.length, 6, "three adjacent, one pair and four single columns need six copies");
+  assert.equal(batched.getStats().uploadCalls, 6);
+  assert.equal(batched.getStats().uploadedTilesPerCall, 1.5);
+  const atlasHeight = batched.getStats().atlasHeight;
+  const covered = [];
+  for (const copy of batchCopies) {
+    const [sx, sy, sw, sh, dx, dy] = copy.drawn;
+    assert.equal(dy, 0, "a run is staged at the top of the strip");
+    assert.equal(dx, sx, "the staged run keeps its atlas column");
+    assert.equal(sw % 256, 0, "only whole tiles are batched");
+    assert.equal(sh, 256);
+    assert.deepEqual(copy.region, { min: [sx, 0], max: [sx + sw, 256] }, "the uploaded region is the staged run");
+    assert.deepEqual(copy.position, [sx, atlasHeight - sy - 256], "the run keeps the per-tile flipped destination");
+    for (let column = 0; column < sw / 256; column++) covered.push((sy / 256) * 16 + sx / 256 + column);
+  }
+  assert.deepEqual(covered.slice().sort((a, b) => a - b), dirtySlots, "every dirty tile is uploaded exactly once");
+  assert.deepEqual(batchCopies.map(copy => copy.token), ["cover-batch-0", "cover-batch-5", "cover-batch-16", "cover-batch-33", "cover-batch-47", "cover-batch-63"], "each run is staged from its first dirty column");
+  batched.dispose();
   assert.equal(cold.array.geometry.attributes.coverReady.getX(7), 1);
   assert.equal(cold.array.geometry.attributes.coverReady.getX(8), 0, "unuploaded cells cannot show stale artwork");
   assert.equal(cold.getStats().uploadedBytes, 2 * 1024 ** 2, "one frame uploads at most 2 MiB at the default budget");
@@ -179,8 +224,11 @@ try {
   while (cold.getStats().dirtyTiles) cold.flushUploads(renderer);
   assert.equal(allocations.length, 1);
   assert.equal(cold.array.material.map.version, versionBefore);
-  const last = copies.find(copy => copy.token === "cover-cold-99");
-  assert.deepEqual(last.position, [768, 5120], "each asynchronous result reaches its own flipped atlas row");
+  const last = copies.find(copy => copy.position[1] === 5120 && copy.region);
+  assert.ok(last, "each asynchronous result reaches its own flipped atlas row");
+  assert.deepEqual(last.position, [0, 5120]);
+  assert.deepEqual(last.region, { min: [0, 0], max: [1024, 256] }, "the four dirty columns of that row share one copy");
+  assert.equal(last.token, "cover-cold-96", "the run starts at the first dirty column of the row");
   assert.equal(cold.flushUploads(renderer), 0, "settled frames upload nothing");
   assert.equal((await cold.prepareVisible()).settled, true);
 
@@ -258,7 +306,40 @@ try {
   speculative.dispose();
   atlas.dispose();
   snapshot.material.map.dispose(); snapshot.material.dispose();
-  console.log("Cover pipeline passed: shared UV/painter, bounded decode and ahead queue, warm focus art, stale prefetch cancellation, 48 MiB cache cap, partial uploads, recycled slot safety and reset/dispose.");
+
+  // Decode budgets follow the pixel budget that already encodes the device tier,
+  // stay bounded at every tier, and change how much browsing survives eviction.
+  assert.deepEqual(coverDecodeBudget(1_440_000), DEFAULT_DECODE_BUDGET);
+  assert.deepEqual(coverDecodeBudget(0), DEFAULT_DECODE_BUDGET, "an unknown budget keeps the low tier");
+  const entryBudget = coverDecodeBudget(2_073_600), discreteBudget = coverDecodeBudget(3_686_400);
+  assert.ok(entryBudget.decodedPixels > DEFAULT_DECODE_BUDGET.decodedPixels);
+  assert.ok(discreteBudget.decodedPixels > entryBudget.decodedPixels);
+  assert.ok(discreteBudget.decodedPixels * 4 <= 128 * 1024 ** 2, "even the largest tier stays bounded");
+  const tiered = new CoverAtlas(64, 8192, 16, undefined, 256, undefined, discreteBudget);
+  assert.equal(tiered.getStats().cacheLimitBytes, discreteBudget.decodedPixels * 4);
+  assert.equal(tiered.getStats().cacheLimitImages, discreteBudget.decodedImages);
+  tiered.setDecodeBudget({ decodedPixels: 1024, decodedImages: 1 });
+  assert.equal(tiered.getStats().cacheLimitBytes, 8 * 1024 ** 2, "a tiny budget is clamped to a usable floor");
+  assert.equal(tiered.getStats().cacheLimitImages, 32);
+  tiered.dispose();
+  const survivors = async (budget) => {
+    const candidate = new CoverAtlas(64, 8192, 16, undefined, 256, undefined, budget);
+    for (let i = 0; i < 260; i++) candidate.setSlot(i % 64, record(`tier-${i}`));
+    for (let guard = 0; guard < 400 && candidate.getStats().pendingImages; guard++) {
+      for (const [url, entry] of [...pending]) if (url.startsWith("cover-tier-")) entry.resolve();
+      await flush();
+    }
+    const stats = candidate.getStats();
+    candidate.dispose();
+    return stats;
+  };
+  const lowTier = await survivors(coverDecodeBudget(1_440_000));
+  const highTier = await survivors(discreteBudget);
+  assert.equal(lowTier.cachedImages, 192, "the low tier stops at its bounded cache");
+  assert.ok(highTier.cachedImages > lowTier.cachedImages,
+    `a tiered budget keeps more thumbnails available (${lowTier.cachedImages} → ${highTier.cachedImages})`);
+  assert.ok(highTier.cachedBytes > lowTier.cachedBytes);
+  console.log("Cover pipeline passed: shared UV/painter, bounded decode and ahead queue, warm focus art, stale prefetch cancellation, tiered and capped decode cache, batched partial uploads, recycled slot safety and reset/dispose.");
 } finally {
   globalThis.document = previousDocument; globalThis.Image = previousImage;
 }

@@ -22,7 +22,7 @@ import { configureInternalOptics } from "./internal-optics";
 import { DecryptionController } from "./decryption";
 import { archiveColumns, columnFiles, fileAtSlot, fileLocation, musicLibrary, records, slotStride, playlistRows } from "./data";
 import type { ArchiveRecord } from './data';
-import { CoverAtlas } from "./cover-atlas";
+import { CoverAtlas, coverDecodeBudget } from "./cover-atlas";
 import { MusicSelectionLighting } from "./music-lighting";
 import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from "./music-camera";
 import { MusicArchiveMotion } from "./music-archive-motion";
@@ -515,7 +515,7 @@ export class ArchiveScene {
       }
     }
     this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting,
-      256, this.coverClarity ? this.coverClarityState : undefined);
+      256, this.coverClarity ? this.coverClarityState : undefined, coverDecodeBudget(this.quality.pixelBudget));
     this.scene.add(this.covers.array);
     this.model.add(this.covers.selected);
     if (!musicLibrary) {
@@ -1021,6 +1021,9 @@ export class ArchiveScene {
     if (this.appliedQuality === key) return;
     this.appliedQuality = key;
     this.quality = quality;
+    // Bounded at every tier; a capable device keeps more thumbnails instead of
+    // re-decoding and re-uploading them while browsing.
+    this.covers?.setDecodeBudget(coverDecodeBudget(quality.pixelBudget));
     if (quality.aoSamples && quality.aoSamples !== this.aoKernelSize) {
       const old = this.ao;
       this.ao = new (musicLibrary && this.optimize ? BudgetSSAOPass : SSAOPass)(this.scene, this.camera, 1, 1, quality.aoSamples);

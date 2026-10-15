@@ -25,6 +25,7 @@ import { DocumentDecryption } from "./document-decryption";
 import { ContentTransition, SurfaceTransition } from "./ui-transitions";
 import { qualityMarkup, syncQualityUI } from "./quality-settings";
 import { automaticQuality, initialQualityMode, type QualityMode } from './automatic-quality';
+import { AdaptiveQuality } from './adaptive-quality';
 import { ArchiveScene } from "./scene";
 import {
   records,
@@ -181,6 +182,9 @@ const initialQuality = initialDesktopQuality(preferences, isDesktop());
 let renderQuality = initialQuality.quality;
 preferences.qualityMode = initialQualityMode(preferences.qualityMode, renderQuality, isDesktop());
 let automaticProfile: ReturnType<typeof automaticQuality> | undefined;
+// Auto mode only: subtracts from the measured budget without ever writing back
+// to preferences, so a manual choice and the saved profile stay untouched.
+const adaptiveQuality = new AdaptiveQuality();
 // Per-session comparison/debug control: resetting a preview starts optimized.
 let glassOcclusionMode: "on" | "off" | "debug" = "on";
 if (isDesktop() && preferences.qualityPipelineVersion !== 5) {
@@ -648,7 +652,37 @@ function detectAutomaticQuality() {
   if (preferences.qualityMode === 'auto') {
     preferences.quality = automaticProfile.preset;
     renderQuality = automaticProfile.quality;
+    adaptiveQuality.reset(renderQuality);
   }
+}
+/** Keep the loop anchored to the authored profile. Called whenever the settings
+ * screen re-applies quality, so opening settings never freezes a degraded state
+ * into the loop's ceiling and a manual choice is respected immediately. */
+function syncAdaptiveBase() {
+  if (preferences.qualityMode === 'auto' && adaptiveQuality.baseKey !== JSON.stringify(renderQuality))
+    adaptiveQuality.reset(renderQuality);
+}
+function qualitySummaryText(quality: RenderQuality) {
+  return `${preferences.qualityMode === 'auto' ? '自动适配' : '手动设置'} · 渲染 ${quality.scale}% · 上限 ${Math.round(quality.pixelBudget / 10000)} 万像素 · 透射 ${quality.transmission * 100}% · 遮蔽 ${quality.aoResolution * 100}% · 景深 ${quality.depthOfFieldResolution * 100}%`;
+}
+/** Applies an adaptation result to the scene only: preferences keep the preset. */
+function applyAdaptiveQuality(quality: RenderQuality) {
+  scene?.setQuality(quality);
+  viewer?.setQuality(quality);
+  const summary = document.querySelector("#quality-summary");
+  if (summary) summary.textContent = `${qualitySummaryText(quality)}${adaptationNote()}`;
+}
+function adaptationNote() {
+  const { applyingLabels } = adaptiveQuality.snapshot();
+  return preferences.qualityMode === 'auto' && applyingLabels.length
+    ? ` · 已按实测下调 ${applyingLabels.length} 项（${applyingLabels.join('、')}）`
+    : "";
+}
+/** The profile actually given to the renderer: the preset in manual mode, the
+ * loop's result in auto mode. Opening settings must not bounce the resolution. */
+function effectiveQuality() {
+  if (preferences.qualityMode !== 'auto') return renderQuality;
+  return adaptiveQuality.snapshot().quality ?? renderQuality;
 }
 function preloadNearbyCovers() {
   if (!scene || !records.length) return;
@@ -664,6 +698,7 @@ async function copyPerformanceReport() {
     version: `${appVersion}-perf21`, browser: navigator.userAgent,
     gpuPreference: (window as unknown as { __RHINE_GPU_REQUEST__?: string }).__RHINE_GPU_REQUEST__ || 'webgl-high-performance',
     automaticQuality: { mode: preferences.qualityMode, profile: automaticProfile },
+    adaptiveQuality: adaptiveQuality.snapshot(),
     viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
     hidden: document.hidden, phase: stage.dataset.musicBoot,
     quality: JSON.parse(host.dataset.renderQuality || "null"),
@@ -2107,13 +2142,14 @@ function renderSettingsPanel() {
 function updateQuality() {
   renderQuality = normalizeQuality(renderQuality);
   preferences.renderQuality = renderQuality;
-  scene?.setQuality(renderQuality);
+  syncAdaptiveBase();
+  const effective = effectiveQuality();
+  scene?.setQuality(effective);
   scene?.setGlassOcclusion(glassOcclusionMode);
-  viewer?.setQuality(renderQuality);
+  viewer?.setQuality(effective);
   syncQualityUI(renderQuality);
   const summary = document.querySelector("#quality-summary");
-  if (summary)
-    summary.textContent = `${preferences.qualityMode === 'auto' ? '自动适配' : '手动设置'} · 渲染 ${renderQuality.scale}% · 上限 ${Math.round(renderQuality.pixelBudget / 10000)} 万像素 · 透射 ${renderQuality.transmission * 100}% · 遮蔽 ${renderQuality.aoResolution * 100}% · 景深 ${renderQuality.depthOfFieldResolution * 100}%`;
+  if (summary) summary.textContent = `${qualitySummaryText(renderQuality)}${adaptationNote()}`;
   const qualityMode = document.querySelector<HTMLSelectElement>('#quality-mode');
   if (qualityMode) qualityMode.value = preferences.qualityMode!;
   savePrefs();
@@ -2882,8 +2918,10 @@ function frame(ms: number) {
         `${Math.round((frameCount * 1000) / (ms - lastFrame))} FPS / ${themeNames[preferences.theme]} / V${appVersion}`;
       // Keep read-only render diagnostics alongside the existing resolution
       // attributes, without adding controls or per-frame DOM work.
+      let gpuP95: number | null = null;
       if (!viewer?.isOpen) {
         const { drawCalls, triangles, selectionLight, arrayMode, visibleAlbumCells, uniqueAlbumCells, covers, graphics, gpuTiming, optimization } = scene.getStats();
+        gpuP95 = gpuTiming?.available ? gpuTiming.gpuP95 : null;
         $("#three-scene").dataset.renderStats = JSON.stringify({
           drawCalls,
           triangles,
@@ -2892,7 +2930,15 @@ function frame(ms: number) {
         $("#three-scene").dataset.selectionLight =
           JSON.stringify(selectionLight);
       }
-      $("#three-scene").dataset.frameTiming = JSON.stringify(frameTiming.snapshot());
+      const frame = frameTiming.snapshot();
+      $("#three-scene").dataset.frameTiming = JSON.stringify(frame);
+      // Automatic quality closes its loop on this same 1.5 s cadence, so the
+      // sampling itself adds no per-frame work. Manual settings never adapt.
+      if (preferences.qualityMode === 'auto') {
+        const next = adaptiveQuality.sample({ gpuP95, frameP95: frame.frameP95, now: ms });
+        if (next) applyAdaptiveQuality(next);
+      }
+      $("#three-scene").dataset.adaptiveQuality = JSON.stringify(adaptiveQuality.snapshot());
       frameCount = 0;
       lastFrame = ms;
     }
