@@ -79,7 +79,8 @@ test('Bodian preview remains a preview and never requests an ungranted full audi
     assert.equal(path, '/api/play/music/v2/checkRight');
     return { status: 3, audition: { https: 'https://audio.sycdn.kuwo.cn/synthetic-preview.mp3' } };
   } });
-  api.remember([song(7)]);
+  // Production reads establish the account scope before populating tracks.
+  api.scope(); api.remember([song(7)]);
   const result = await api.prepare('7');
   assert.ok(result.trial); assert.ok(result.audioUrl.includes('preview'));
   assert.equal(platformMediaUrl('bodian', 'https://kuwo.cn.attacker.example/audio'), undefined);

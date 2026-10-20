@@ -1,3 +1,4 @@
+@import './music-song-actions.css';
 .music-view-toggle, .overview-return {
   position: absolute; z-index: 7; left: 40px;
   display: flex; align-items: center; gap: 11px; padding: 9px 0;
@@ -63,10 +64,18 @@
 .overview-playlist-content { display: flex; flex-direction: column; height: var(--overview-list-height); border-top: 1px solid var(--line); box-sizing: border-box; }
 .overview-playlist-tracks { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .overview-list-error { flex: 0 1 auto; max-height: 70px; overflow-y: auto; margin: 0; }
-.overview-playlist-window > button { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; width: 100%; border: 0; padding: 10px 14px; background: transparent; text-align: left; color: var(--ink); }
-.overview-playlist-window > button > span:first-child { padding-top: 2px; font-size: 10px; color: var(--muted); }
-.overview-playlist-window > button:is(:hover, :focus-visible) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.overview-playlist-window > button:disabled { opacity: .5; }
+.overview-song-row { display: flex; align-items: center; gap: 5px; width: 100%; padding: 0 7px; box-sizing: border-box; }
+.overview-song-title { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 5px; flex: 1; min-width: 0; height: 100%; border: 0; padding: 9px 0; background: transparent; text-align: left; color: var(--ink); }
+.overview-song-title > span { min-width: 0; }
+.overview-song-title > span:first-child { padding-top: 2px; font-size: 10px; color: var(--muted); }
+.overview-song-title strong, .overview-song-title small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-song-title strong { font-size: 11px; font-weight: 500; }
+.overview-song-title small { font-size: 9px; color: var(--muted); margin-top: 4px; }
+.overview-song-row:has(button:focus-visible), .overview-song-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.overview-song-title:disabled { opacity: .5; }
+.overview-song-row .row-song-actions { gap: 3px; }
+.overview-song-row .row-song-action { width: 26px; height: 28px; }
+.overview-song-row .row-song-action svg { width: 16px; height: 16px; }
 .overview-playlist-window > p, .overview-list-error { padding: 12px; font-size: 12px; }
 .overview-return { bottom: 77px; pointer-events: auto; }
 .overview-controls { position: absolute; bottom: 76px; right: 40px; display: flex; align-items: center; gap: 22px; pointer-events: auto; }
@@ -120,7 +129,7 @@
 }
 
 .overview-playlist-window { position: relative; min-height: 50px; }
-.overview-playlist-window > button { position: absolute; left: 0; height: 56px; }
+.overview-playlist-window > .overview-song-row { position: absolute; left: 0; height: 56px; }
 .overview-playlist-tracks { scrollbar-color: color-mix(in srgb, var(--ink) 30%, transparent) transparent; }
 .overview-playlist-tracks::-webkit-scrollbar { width: 5px; background: transparent; }
 .overview-playlist-tracks::-webkit-scrollbar-track { background: transparent; }

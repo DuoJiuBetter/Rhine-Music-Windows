@@ -1,8 +1,8 @@
 import type { MusicAlbum, MusicTrack, NeteasePlaylist } from './music-types';
 import { playbackAlbums } from './playback-albums.ts';
-import { wrap } from './archive-loop.ts';
+import { MUSIC_LOOP_ROWS, wrap } from './archive-loop.ts';
 import { musicPlatforms, type MusicProvider } from './music-platform.ts';
-import { fetchOnline } from './online-debug';
+import { fetchOnline } from './online-debug.ts';
 export class NeteasePlaylists {
   playlists: NeteasePlaylist[] = [];
   loading = false;
@@ -98,8 +98,16 @@ export class NeteasePlaylists {
     const worker = async () => {
       while (cursor < nearby.length && generation === this.generation && windowEpoch === this.windowEpoch) {
         const playlist = nearby[cursor++], total = this.playlists[playlist].trackCount;
-        // Enumerate the visible depth so different lengths and both loop seams are covered.
-        const positions = [...new Set(Array.from({ length: 49 }, (_, index) => Math.floor(wrap(song + index - 24, Math.max(1, total)) / 50) * 50))];
+        // Keep one extra metadata page ahead/behind the selected shelf. Near
+        // the loop seam, rank by circular distance so visible pages arrive
+        // before speculative ones. Neighbouring shelves retain the old size.
+        const radius = MUSIC_LOOP_ROWS / 2 + (playlist === row ? 50 : 0);
+        const distances = new Map<number, number>();
+        for (let delta = -radius; delta <= radius; delta++) {
+          const offset = Math.floor(wrap(song + delta, Math.max(1, total)) / 50) * 50;
+          distances.set(offset, Math.min(distances.get(offset) ?? Infinity, Math.abs(delta)));
+        }
+        const positions = [...distances.keys()].sort((a, b) => distances.get(a)! - distances.get(b)!);
         for (const position of positions) {
           if (generation !== this.generation || windowEpoch !== this.windowEpoch) return;
           await this.ensure(playlist, position);
@@ -158,6 +166,23 @@ export class NeteasePlaylists {
       }
     })();
   }
+  /** Resolve against the full playlist, not the current three-page audio window. */
+  async playbackStep(row: number, currentId: string, direction: number, mode: 'sequential' | 'shuffle', previous?: number) {
+    const playlist = this.playlists[row], song = this.position(row, currentId);
+    if (!playlist || song === undefined || !playlist.trackCount) return;
+    let target = wrap(song + direction, playlist.trackCount);
+    if (mode === 'shuffle') {
+      if (direction < 0 && previous !== undefined && previous >= 0 && previous < playlist.trackCount) target = previous;
+      else if (playlist.trackCount > 1) target = wrap(song + 1 + Math.floor(Math.random() * (playlist.trackCount - 1)), playlist.trackCount);
+    }
+    const generation = this.generation;
+    const queue = await this.queue(row, target);
+    if (generation !== this.generation) throw new DOMException('歌单已改变', 'AbortError');
+    const track = this.track(row, target);
+    if (!track) throw new Error('暂时无法读取这首歌曲，请稍后重试。');
+    return { id: track.id, queue, position: target };
+  }
+
   async queue(row: number, song: number) {
     const playlist = this.playlists[row]; if (!playlist) return [];
     const offset = Math.floor(song / 50) * 50;

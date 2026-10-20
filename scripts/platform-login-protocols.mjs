@@ -42,13 +42,15 @@ function qqWebAuth(credential) {
     cookie: `uin=${uin}; qqmusic_uin=${uin}; ${loginType === 1 ? `wxuin=${uin}; ` : ''}qqmusic_key=${credential.musickey}; qm_keyst=${credential.musickey}; tmeLoginType=${loginType}` };
 }
 
-function qqResponse(result, block, operation) {
+function qqResponse(result, block, operation, mutation = false) {
   const codes = [result?.code, block?.code].filter(code => code !== undefined);
   const code = codes.find(code => !Number.isFinite(Number(code)) || Number(code) !== 0);
   if (code !== undefined) {
     const safeCode = Number.isSafeInteger(Number(code)) ? Number(code) : '格式异常';
     throw Object.assign(failure(`QQ 音乐${operation}未成功（错误码 ${safeCode}），请重新登录或稍后重试。`), { businessCode: safeCode });
   }
+  if (mutation && (block?.code === undefined || Number(block.code) !== 0)) throw failure(`QQ 音乐${operation}没有返回明确的成功状态，请刷新歌单核对。`);
+  if (mutation && block.data === undefined) return {};
   if (!block?.data || typeof block.data !== 'object') throw failure(`QQ 音乐${operation}响应格式发生变化。`);
   return block.data;
 }
@@ -91,6 +93,8 @@ export class PlatformLoginProtocols {
       : { cv: 13020508, v: 13020508, ct: '11', tmeAppID: 'qqmusic', format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', uid: '0', tmeLoginType: String(loginType) };
     const search = module === 'music.search.SearchCgiService' && method === 'DoSearchForQQMusicDesktop';
     const playback = module === 'vkey.GetVkeyServer' && method === 'CgiGetVkey';
+    const mutation = module === 'music.musicasset.PlaylistBaseWrite' && ['AddPlaylist', 'DelPlaylist'].includes(method)
+      || module === 'music.musicasset.PlaylistDetailWrite' && ['AddSonglist', 'DelSonglist'].includes(method);
     const key = search ? module : playback ? 'req_0' : 'req';
     // QQ's official portal Web player uses req_0 with ct 24 / cv 0. Account
     // and login calls retain their own envelopes and authenticated cookies.
@@ -98,7 +102,7 @@ export class PlatformLoginProtocols {
     for (let attempt = 0; ; attempt++) {
       const raw = await this.request('https://u.y.qq.com/cgi-bin/musicu.fcg', { method: 'POST', body: JSON.stringify(envelope), headers: { 'Content-Type': 'application/json', Referer: 'https://y.qq.com/', Origin: 'https://y.qq.com', ...(auth ? { Cookie: auth.cookie } : {}) }, signal, maxBytes: 2097152 });
       const result = readJson(raw);
-      try { return qqResponse(result, result?.[key], search ? '搜索' : '请求'); }
+      try { return qqResponse(result, result?.[key], search ? '搜索' : mutation ? '歌单编辑' : '请求', mutation); }
       catch (error) {
         if (!search || error.businessCode !== 2001 || attempt >= 2) throw error;
         await delay(250, undefined, { signal });

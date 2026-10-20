@@ -3,6 +3,11 @@ import { fetchOnline, reportOnlineFailure } from './online-debug.ts';
 import type { MusicTrack } from "./music-types";
 import { normalizeSongTransition, type SongTransitionMode } from "./music-song-transition.ts";
 import { AudioClockSuspended, BrowserGaplessPlayer } from "./music-browser-gapless.ts";
+import { MusicSpectrum } from './music-spectrum.ts';
+import { queueEntryKey, temporaryTrack, uniqueQueue, refreshPlaybackQueue, type PlaybackOrigin } from './playback-queue.ts';
+
+export const PLAYBACK_MODES = ["sequential", "shuffle", "repeat-one"] as const;
+export type PlaybackMode = typeof PLAYBACK_MODES[number];
 
 export interface AudioOutputDevice { id: string; name: string }
 export interface AudioCapabilities {
@@ -24,6 +29,8 @@ export interface MusicPlayerState {
   currentTrack: MusicTrack | null;
   queue: readonly MusicTrack[];
   currentIndex: number;
+  playbackMode: PlaybackMode;
+  playbackRate: number;
   playing: boolean;
   loading: boolean;
   duration: number;
@@ -73,17 +80,13 @@ const seconds = (value: number) =>
   Number.isFinite(value) && value > 0 ? value : 0;
 const isDsdTrack = (track: MusicTrack) =>
   /^(DSD|DSF|DFF)$/i.test(track.format) || /\.(dsf|dff)$/i.test(track.relativePath);
-const uniqueTracks = (tracks: readonly MusicTrack[]): MusicTrack[] => {
-  const seen = new Set<string>();
-  return tracks.filter((track) => {
-    if (seen.has(track.id)) return false;
-    seen.add(track.id);
-    return true;
-  });
-};
+const uniqueTracks = uniqueQueue;
 
 /** Music transport is independent from TerminalAudio and the Three.js scene lifecycle. */
 export class MusicPlayer {
+  private readonly spectrum = new MusicSpectrum();
+  private spectrumEnabled = false;
+  private spectrumResponsive = false;
   private value: Omit<MusicPlayerState, "transport">;
   private listeners = new Set<Listener>();
   private song?: HTMLAudioElement;
@@ -99,11 +102,19 @@ export class MusicPlayer {
   private fade?: Fade;
   private gestureReceived = false;
   private disposed = false;
+  private nextChoice?: { current: string; id: string };
+  private nextUp: string[] = [];
+  private playHistory: string[] = [];
+  private sourceAnchor?: MusicTrack;
+  private continuations = new Map<string, MusicTrack | undefined>();
+  private excluded = new Set<string>();
+  private queueNavigator?: (direction: number, mode: Exclude<PlaybackMode, 'repeat-one'>) => Promise<{ id: string; queue: readonly MusicTrack[] } | undefined>;
   private pendingSeek: number | null = null;
   private preparation?: AbortController;
   private onlineRecovery?: OnlineRecovery;
   private nativePoll?: ReturnType<typeof setTimeout>;
   private nativeEndedSerial = 0;
+  private nativeBoundarySerial = 0;
   private outputOperation = 0;
   private nativePollEpoch = 0;
   private gapless?: BrowserGaplessPlayer;
@@ -114,6 +125,7 @@ export class MusicPlayer {
 
   constructor(
     options: {
+      playbackMode?: PlaybackMode;
       volume?: number;
       songTransitionMode?: SongTransitionMode;
       songFadeEnabled?: boolean;
@@ -126,6 +138,8 @@ export class MusicPlayer {
       currentTrack: null,
       queue: [],
       currentIndex: -1,
+      playbackMode: options.playbackMode && PLAYBACK_MODES.includes(options.playbackMode) ? options.playbackMode : "sequential",
+      playbackRate: 1,
       playing: false,
       loading: false,
       duration: 0,
@@ -183,6 +197,22 @@ export class MusicPlayer {
     return capabilities;
   }
 
+  setSpectrumEnabled(enabled: boolean, responsive = false) {
+    this.spectrumEnabled = enabled; this.spectrumResponsive = responsive;
+    this.spectrum.setEnabled(enabled, responsive);
+    this.gapless?.setSpectrumEnabled(enabled, responsive);
+    if (enabled && this.song) this.spectrum.attach(this.song);
+  }
+  readSpectrum(target: Uint8Array<ArrayBuffer>): boolean {
+    target.fill(0);
+    if (!this.spectrumEnabled || !this.value.playing || this.value.loading || this.value.backend !== 'browser') return false;
+    if (this.gapless?.trackId) return this.gapless.readSpectrum(target);
+    return this.spectrum.read(target);
+  }
+  get spectrumSampleRate(): number {
+    return this.gapless?.trackId ? this.gapless.spectrumSampleRate : this.spectrum.sampleRate;
+  }
+
   async setBackend(backend: "browser" | "coreaudio", deviceId = "default"): Promise<void> {
     if (this.disposed) return;
     const outputRequest = ++this.outputOperation;
@@ -199,7 +229,7 @@ export class MusicPlayer {
     const resume = this.expectsSong();
     ++this.operation;
     this.preparation?.abort();
-    this.gapless?.stop(); this.cancelNativeNext();
+    this.gapless?.stop(); this.value.playbackRate = 1; this.gapless?.setPlaybackRate(1); this.cancelNativeNext();
     this.gaplessFallback = false; this.value.transitionWarning = null;
     this.releaseSong();
     this.value.playing = false; this.value.loading = false; this.value.error = null;
@@ -252,14 +282,68 @@ export class MusicPlayer {
     }
   }
 
+  setQueueNavigator(navigator: NonNullable<MusicPlayer["queueNavigator"]>): void {
+    this.queueNavigator = navigator;
+  }
+  /** Paged playlist navigation continues from the last source song, not an insert. */
+  get navigationTrack(): MusicTrack | undefined {
+    const anchor = this.sourceAnchor ?? this.value.currentTrack ?? undefined;
+    return anchor?.queueEntry?.replacement ? this.continuations.get(queueEntryKey(anchor)) ?? anchor : anchor;
+  }
+  private rememberContinuation(track: MusicTrack): void {
+    if (!track.queueEntry || track.queueEntry.replacement) this.sourceAnchor = track;
+    else if (this.continuations.has(queueEntryKey(track))) this.sourceAnchor = this.continuations.get(queueEntryKey(track));
+    else this.continuations.set(queueEntryKey(track), this.sourceAnchor);
+  }
+
+  setPlaybackMode(mode: PlaybackMode): void {
+    if (this.disposed || mode === this.value.playbackMode) return;
+    this.value.playbackMode = PLAYBACK_MODES.includes(mode) ? mode : "sequential";
+    this.nextChoice = undefined; this.playHistory = [];
+    this.prepareSuccessor(); this.emit();
+  }
+
+  private rememberTrack(id: string, forward = true): void {
+    this.nextUp = this.nextUp.filter(item => item !== id);
+    const previous = queueEntryKey(this.value.currentTrack);
+    if (previous === id) return;
+    if (!forward) this.playHistory.pop();
+    else if (previous) { this.playHistory.push(previous); if (this.playHistory.length > 200) this.playHistory.shift(); }
+    this.nextChoice = undefined;
+  }
+
+  private successor(automatic = true): MusicTrack | undefined {
+    const { queue, currentIndex, currentTrack, playbackMode } = this.value;
+    const queued = this.nextUp.map(id => queue.find(track => queueEntryKey(track) === id)).find(Boolean);
+    if (queued) return queued;
+    if (!queue.length) return;
+    if (automatic && playbackMode === "repeat-one" && currentTrack) {
+      return currentTrack;
+    }
+    if (playbackMode !== "shuffle" || queue.length <= 1)
+      return queue[(currentIndex + 1) % queue.length];
+    if (this.nextChoice?.current === queueEntryKey(currentTrack)) {
+      const reserved = queue.find(track => queueEntryKey(track) === this.nextChoice!.id);
+      if (reserved) return reserved;
+    }
+    // Reserve once: gapless preparation and the actual handoff must agree.
+    const candidates = queue.filter(track => queueEntryKey(track) !== queueEntryKey(currentTrack));
+    const next = candidates[Math.floor(Math.random() * candidates.length)];
+    this.nextChoice = { current: queueEntryKey(currentTrack), id: queueEntryKey(next) };
+    return next;
+  }
+
   setQueue(tracks: readonly MusicTrack[]): void {
     if (this.disposed) return;
     void this.gapless?.trackId;
-    const queue = uniqueTracks(tracks);
+    const queue = refreshPlaybackQueue(tracks.filter(track => !this.excluded.has(queueEntryKey(track))), this.value.queue, this.value.currentTrack, this.nextUp);
     this.value.queue = queue;
+    for (const key of this.continuations.keys()) if (!queue.some(track => queueEntryKey(track) === key)) this.continuations.delete(key);
+    this.nextUp = this.nextUp.filter(id => queue.some(track => queueEntryKey(track) === id));
+    this.nextChoice = undefined;
     const apply = () => {
-      const id = this.value.currentTrack?.id;
-      const index = queue.findIndex((track) => track.id === id);
+      const id = queueEntryKey(this.value.currentTrack);
+      const index = queue.findIndex((track) => queueEntryKey(track) === id);
       if (id && index === -1) {
         this.stop(); this.value.currentTrack = null; this.value.duration = 0;
       } else if (index !== -1) this.value.currentTrack = queue[index];
@@ -273,23 +357,79 @@ export class MusicPlayer {
     } else apply();
   }
 
+  /** Explicit next-up takes priority over shuffle and a paged library navigator. */
+  queueNext(track: MusicTrack, origin?: PlaybackOrigin): boolean {
+    if (this.disposed || this.value.queue.filter(track => track.queueEntry).length >= 100) return false;
+    const entry = temporaryTrack(track, origin);
+    this.nextUp.unshift(queueEntryKey(entry));
+    const queue = [...this.value.queue];
+    queue.splice(this.value.currentIndex + 1, 0, entry); this.setQueue(queue);
+    return true;
+  }
+
+  async playTemporary(track: MusicTrack, origin?: PlaybackOrigin): Promise<void> {
+    if (!this.queueNext(track, origin)) { if (!this.disposed) { this.value.error = '临时待播队列已满，请先移除部分歌曲。'; this.emit(); } return; }
+    await this.play(this.nextUp[0]);
+  }
+
+  /** Search playback replaces this slot, preserving neighbours and source cursor. */
+  async replaceCurrent(track: MusicTrack, origin?: PlaybackOrigin): Promise<void> {
+    if (this.disposed) return;
+    if (!this.value.queue.length || this.value.currentIndex < 0) {
+      await this.play(track.id, [{ ...track, queueOrigin: origin }]); return;
+    }
+    const entry = temporaryTrack(track, origin), previous = this.value.currentTrack;
+    entry.queueEntry!.replacement = true;
+    const anchor = this.navigationTrack;
+    this.continuations.set(queueEntryKey(entry), anchor);
+    if (previous && !previous.queueEntry) this.excluded.add(queueEntryKey(previous));
+    this.nextUp = this.nextUp.filter(key => key !== queueEntryKey(previous));
+    const queue = [...this.value.queue]; queue[this.value.currentIndex] = entry;
+    this.value.queue = queue; this.nextChoice = undefined;
+    await this.play(queueEntryKey(entry));
+  }
+
+  removeQueueEntry(key: string): void {
+    const entry = this.value.queue.find(track => queueEntryKey(track) === key);
+    if (!entry || key === queueEntryKey(this.value.currentTrack)) return;
+    if (!entry.queueEntry) this.excluded.add(key);
+    this.continuations.delete(key); this.nextUp = this.nextUp.filter(id => id !== key);
+    // Explicit editing, unlike a background page refresh, replaces the projection.
+    const queue = this.value.queue.filter(track => queueEntryKey(track) !== key);
+    this.value.queue = queue; this.value.currentIndex = queue.findIndex(track => queueEntryKey(track) === queueEntryKey(this.value.currentTrack));
+    this.prepareSuccessor(); this.emit();
+  }
+
+  moveQueueEntry(key: string, direction: number): void {
+    const queue = [...this.value.queue], index = queue.findIndex(track => queueEntryKey(track) === key), target = index + Math.sign(direction);
+    if (index <= this.value.currentIndex || target <= this.value.currentIndex || target >= queue.length) return;
+    [queue[index], queue[target]] = [queue[target], queue[index]];
+    this.nextUp = queue.slice(this.value.currentIndex + 1).map(queueEntryKey);
+    this.value.queue = queue; this.prepareSuccessor(); this.emit();
+  }
+
   async play(id: string, tracks?: readonly MusicTrack[]): Promise<void> {
+    if (tracks?.some(track => queueEntryKey(track) === id) && (tracks.length !== this.value.queue.length || tracks.some((track, i) => queueEntryKey(track) !== queueEntryKey(this.value.queue[i])))) {
+      this.nextUp = []; this.excluded.clear(); this.sourceAnchor = undefined; this.playHistory = []; this.continuations.clear();
+    }
     return this.playAttempt(id, tracks, { retries: 0 });
   }
 
-  private async playAttempt(id: string, tracks: readonly MusicTrack[] | undefined, recovery: OnlineRecovery): Promise<void> {
+  private async playAttempt(id: string, tracks: readonly MusicTrack[] | undefined, recovery: OnlineRecovery, forward = true): Promise<void> {
     if (this.disposed) return;
     const queue = tracks ? uniqueTracks(tracks) : this.value.queue;
     if (tracks && (queue.length !== this.value.queue.length || queue.some((track, i) => track.id !== this.value.queue[i]?.id))) {
       this.gaplessFallback = false; this.value.transitionWarning = null;
     }
-    const index = queue.findIndex((track) => track.id === id);
+    const index = queue.findIndex((track) => queueEntryKey(track) === id);
     if (index === -1) {
       this.value.error = "这首歌曲已不在播放队列中，请重新选择。";
       this.emit();
       return;
     }
     const track = queue[index];
+    this.rememberTrack(queueEntryKey(track), forward);
+    this.rememberContinuation(track);
     if (this.value.backend === "coreaudio") return this.playNative(track, queue, index);
     if (this.value.songTransitionMode === "gapless" && queue.some(item => item.onlineSource)) this.gaplessWarning();
     if (this.value.songTransitionMode === "gapless" && !this.gaplessFallback)
@@ -299,10 +439,11 @@ export class MusicPlayer {
     // Updating the queue in a play request keeps cross-album switches in the same fade.
     this.value.queue = queue;
     const request = ++this.operation;
-    const retainedSeek = this.value.currentTrack?.id === id ? this.pendingSeek : null;
+    const sameEntry = queueEntryKey(this.value.currentTrack) === queueEntryKey(track);
+    const retainedSeek = sameEntry ? this.pendingSeek : null;
     this.cancelSongFade();
     const resume =
-      this.songTrackId === id && this.song && !this.song.ended
+      sameEntry && this.songTrackId === track.id && this.song && !this.song.ended
         ? this.song
         : undefined;
     this.value.currentTrack = track;
@@ -346,7 +487,7 @@ export class MusicPlayer {
       const controller = new AbortController(); this.preparation = controller;
       try {
         const response = await fetchOnline(track.onlineSource.provider, 'playback', `/api/online/${track.onlineSource.provider}/prepare/${encodeURIComponent(track.onlineSource.id)}`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: controller.signal,
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sameOrigin: true }), signal: controller.signal,
         }, recovery.retries + 1);
         const result = await response.json().catch(() => {
           reportOnlineFailure(track.onlineSource!.provider, 'playback', { stage: 'response', code: `${track.onlineSource!.provider.toUpperCase()}_FRONTEND_INVALID_JSON` }, response.status, recovery.retries + 1);
@@ -461,7 +602,7 @@ export class MusicPlayer {
     } finally { if (this.preparation === controller) this.preparation = undefined; }
     // Fresh source and element each time; the budget survives successful loads
     // within this play intent. Stop/pause/selection abort both wait and request.
-    await this.playAttempt(track.id, undefined, recovery);
+    await this.playAttempt(queueEntryKey(track), undefined, recovery);
   }
 
   async toggle(): Promise<void> {
@@ -480,13 +621,15 @@ export class MusicPlayer {
           if (request !== this.operation || this.disposed) return;
           this.adoptNativePosition(state); this.emit();
         } catch (error) { if (request === this.operation && !this.disposed) this.fail(error instanceof Error ? error.message : "原生输出暂停失败"); }
-      } else { const track = this.value.currentTrack ?? this.value.queue[0]; if (track) await this.play(track.id); }
+      } else { const track = this.value.currentTrack ?? this.value.queue[0]; if (track) await this.play(queueEntryKey(track)); }
       return;
     }
     if (this.transport === "loading" || this.transport === "playing") {
       ++this.operation;
       this.preparation?.abort();
       if (this.gapless?.trackId) this.value.currentTime = this.gapless.pause();
+      else if (this.song && this.songTrackId === this.value.currentTrack?.id)
+        this.value.currentTime = this.pendingSeek ?? seconds(this.song.currentTime);
       this.cancelSongFade();
       this.transport = "paused";
       this.song?.pause();
@@ -502,19 +645,40 @@ export class MusicPlayer {
       return;
     }
     const track = this.value.currentTrack ?? this.value.queue[0];
-    if (track) await this.play(track.id);
+    if (track) await this.play(queueEntryKey(track));
   }
 
   async next(): Promise<void> {
+    return this.advance(false);
+  }
+
+  private async advance(automatic: boolean): Promise<void> {
     if (this.disposed) return;
     if (this.value.backend === "coreaudio") {
       const operation = this.operation; await this.cancelNativeNext();
       if (operation !== this.operation || this.disposed) return;
     }
     void this.gapless?.trackId;
-    const track = this.value.queue[this.value.currentIndex + 1];
-    if (track) await this.play(track.id);
-    else this.stop();
+    const request = ++this.operation;
+    this.transport = "loading"; this.value.loading = true; this.emit();
+    try {
+      const adjacent = this.value.queue[(this.value.currentIndex + 1) % this.value.queue.length];
+      const explicitNext = this.nextUp.some(id => this.value.queue.some(track => queueEntryKey(track) === id)) ||
+        Boolean(adjacent?.queueEntry) || this.value.playbackMode === 'shuffle' && this.value.queue.some(track => track.queueEntry);
+      const repeat = automatic && this.value.playbackMode === 'repeat-one';
+      const navigationMode = this.value.playbackMode === 'repeat-one' ? 'sequential' : this.value.playbackMode;
+      let resolved = explicitNext || repeat ? undefined : await this.queueNavigator?.(1, navigationMode);
+      for (let skipped = 0; resolved && this.excluded.has(resolved.id) && skipped <= this.excluded.size; skipped++) {
+        if (request !== this.operation || this.disposed) return;
+        this.sourceAnchor = resolved.queue.find(track => track.id === resolved!.id);
+        resolved = await this.queueNavigator?.(1, navigationMode);
+      }
+      if (this.disposed || request !== this.operation) return;
+      const refreshed = resolved ? refreshPlaybackQueue(resolved.queue.filter(track => !this.excluded.has(queueEntryKey(track))), this.value.queue, this.value.currentTrack, this.nextUp) : undefined;
+      const track = resolved ? refreshed?.find(track => track.id === resolved.id && !track.queueEntry) : this.successor(automatic);
+      if (track) { if (track.id === this.value.currentTrack?.id) { this.pendingSeek = 0; this.value.currentTime = 0; } await this.playAttempt(queueEntryKey(track), refreshed, { retries: 0 }); }
+      else this.stop();
+    } catch (error) { if (!this.disposed && request === this.operation) this.fail(error instanceof Error ? error.message : "无法读取下一首歌曲"); }
   }
 
   async previous(): Promise<void> {
@@ -528,10 +692,30 @@ export class MusicPlayer {
       this.seek(0);
       return;
     }
-    const track = this.value.queue[Math.max(0, this.value.currentIndex - 1)];
+    const request = ++this.operation;
+    this.transport = "loading"; this.value.loading = true; this.emit();
+    let resolved: { id: string; queue: readonly MusicTrack[] } | undefined;
+    const previousKey = this.playHistory.at(-1);
+    const historical = this.value.queue.some(track => track.queueEntry) ? this.value.queue.find(track => queueEntryKey(track) === previousKey) : undefined;
+    try {
+      const mode = this.value.playbackMode === 'repeat-one' ? 'sequential' : this.value.playbackMode;
+      const adjacent = this.value.queue[(this.value.currentIndex - 1 + this.value.queue.length) % this.value.queue.length];
+      resolved = historical || adjacent?.queueEntry ? undefined : await this.queueNavigator?.(-1, mode);
+      for (let skipped = 0; resolved && this.excluded.has(resolved.id) && skipped <= this.excluded.size; skipped++) {
+        if (request !== this.operation || this.disposed) return;
+        this.sourceAnchor = resolved.queue.find(track => track.id === resolved!.id);
+        resolved = await this.queueNavigator?.(-1, mode);
+      }
+    }
+    catch (error) { if (!this.disposed && request === this.operation) this.fail(error instanceof Error ? error.message : "无法读取上一首歌曲"); return; }
+    if (this.disposed || request !== this.operation) return;
+    const history = this.value.playbackMode === "shuffle" ? this.playHistory.at(-1) : undefined;
+    const refreshed = resolved ? refreshPlaybackQueue(resolved.queue.filter(track => !this.excluded.has(queueEntryKey(track))), this.value.queue, this.value.currentTrack, this.nextUp) : undefined;
+    const track = historical ?? (resolved ? refreshed?.find(track => track.id === resolved.id && !track.queueEntry) :
+      this.value.queue.find(track => queueEntryKey(track) === history) ?? this.value.queue[(this.value.currentIndex - 1 + this.value.queue.length) % this.value.queue.length]);
     if (track) {
       if (track.id === this.value.currentTrack?.id) this.seek(0);
-      await this.play(track.id);
+      await this.playAttempt(queueEntryKey(track), refreshed, { retries: 0 }, false);
     }
   }
 
@@ -577,7 +761,7 @@ export class MusicPlayer {
     if (this.disposed) return;
     ++this.operation;
     this.preparation?.abort();
-    this.gapless?.stop(); void this.cancelNativeNext(false);
+    this.gapless?.stop(); this.value.playbackRate = 1; this.gapless?.setPlaybackRate(1); void this.cancelNativeNext(false);
     this.gaplessFallback = false; this.value.transitionWarning = null;
     if (this.value.backend === "coreaudio") void this.nativeCommand({ action: "stop" }).catch(() => {});
     this.transport = "idle";
@@ -588,6 +772,21 @@ export class MusicPlayer {
     this.value.error = null;
     this.emit();
     void this.reconcileBgm();
+  }
+
+  clearQueue(): void {
+    this.stop(); this.nextUp = []; this.excluded.clear(); this.sourceAnchor = undefined; this.playHistory = []; this.continuations.clear();
+    this.value.queue = []; this.value.currentTrack = null; this.value.currentIndex = -1; this.value.duration = 0; this.emit();
+  }
+
+  setPlaybackRate(rate: number): void {
+    if (this.disposed || this.value.backend !== "browser" || !Number.isFinite(rate)) return;
+    const next = Math.max(0.5, Math.min(2, rate));
+    if (next === this.value.playbackRate) return;
+    this.value.playbackRate = next;
+    if (this.song) this.song.playbackRate = next;
+    this.gapless?.setPlaybackRate(next);
+    this.prepareSuccessor(); this.emit();
   }
 
   setVolume(volume: number): void {
@@ -669,6 +868,7 @@ export class MusicPlayer {
     if (this.value.backend === "coreaudio") void this.nativeCommand({ action: "stop" }, true).catch(() => {});
     this.preparation?.abort();
     this.gapless?.dispose(); this.gapless = undefined;
+    this.spectrum.dispose();
     ++this.nativePrepareGeneration;
     this.stopNativePoll();
     this.disposed = true;
@@ -697,7 +897,7 @@ export class MusicPlayer {
     const active = () =>
       !this.disposed &&
       this.song === audio &&
-      this.value.currentTrack?.id === track.id;
+      queueEntryKey(this.value.currentTrack) === queueEntryKey(track);
     audio.addEventListener("loadedmetadata", () => {
       if (!active()) return;
       this.value.duration = seconds(audio.duration) || seconds(track.duration);
@@ -761,22 +961,16 @@ export class MusicPlayer {
       this.value.playing = false;
       this.value.loading = false;
       this.value.currentTime = this.value.duration;
-      const next = this.value.queue[this.value.currentIndex + 1];
-      if (next) {
-        // No idle intermediate state, so BGM never appears between songs.
-        void this.play(next.id);
-      } else {
-        ++this.operation;
-        this.transport = "idle";
-        this.emit();
-        void this.reconcileBgm();
-      }
+      this.transport = "loading";
+      void this.advance(true);
     });
     audio.addEventListener("error", () => {
       if (active()) void this.handleSongFailure(track, audio.error, this.operation);
       else if (this.song === audio) this.cancelSongFade();
     });
+    audio.playbackRate = this.value.playbackRate;
     audio.src = source || `/api/audio/${encodeURIComponent(track.id)}`;
+    if (this.spectrumEnabled) this.spectrum.attach(audio);
     return audio;
   }
 
@@ -805,6 +999,7 @@ export class MusicPlayer {
     this.songGain = 1;
     this.pendingSeek = null;
     if (!old) return;
+    this.spectrum.release();
     old.pause();
     old.removeAttribute("src");
     old.load();
@@ -912,7 +1107,7 @@ export class MusicPlayer {
   private async playGapless(track: MusicTrack, queue: readonly MusicTrack[], index: number): Promise<void> {
     void this.gapless?.trackId;
     const request = ++this.operation;
-    const same = this.value.currentTrack?.id === track.id;
+    const same = queueEntryKey(this.value.currentTrack) === queueEntryKey(track);
     const position = same ? this.pendingSeek ?? (this.gapless?.trackId === track.id ? this.gapless.position : this.value.currentTime) : 0;
     this.preparation?.abort();
     const controller = new AbortController(); this.preparation = controller;
@@ -924,13 +1119,14 @@ export class MusicPlayer {
     try {
       this.gapless ??= new BrowserGaplessPlayer({
         progress: (current, position, duration) => {
-          if (this.disposed || this.value.backend !== "browser" || this.value.currentTrack?.id !== current.id) return;
+          if (this.disposed || this.value.backend !== "browser" || queueEntryKey(this.value.currentTrack) !== queueEntryKey(current)) return;
           this.value.currentTime = position; this.value.duration = duration; this.emit();
         },
         boundary: (current, duration) => {
           if (this.disposed || this.value.backend !== "browser" || this.value.songTransitionMode !== "gapless") return;
-          const index = this.value.queue.findIndex(item => item.id === current.id);
+          const index = this.value.queue.findIndex(item => queueEntryKey(item) === queueEntryKey(current));
           if (index < 0) { this.stop(); return; }
+          this.rememberTrack(queueEntryKey(current)); this.rememberContinuation(current);
           this.value.currentTrack = current; this.value.currentIndex = index;
           this.value.currentTime = 0; this.value.duration = duration;
           this.value.playing = true; this.value.loading = false; this.transport = "playing";
@@ -938,12 +1134,8 @@ export class MusicPlayer {
         },
         ended: () => {
           if (this.disposed || this.value.backend !== "browser" || this.transport !== "playing") return;
-          const next = this.value.queue[this.value.currentIndex + 1];
-          if (next) { this.gaplessWarning(); void this.play(next.id); }
-          else {
-            this.transport = "idle"; this.value.playing = false;
-            this.value.currentTime = this.value.duration; this.emit(); void this.reconcileBgm();
-          }
+          this.gaplessWarning(); this.transport = "loading";
+          void this.advance(true);
         },
         interrupted: position => {
           if (this.disposed || this.value.backend !== "browser") return;
@@ -953,7 +1145,9 @@ export class MusicPlayer {
         },
       });
       this.gapless.volume(this.value.volume);
+      this.gapless.setPlaybackRate(this.value.playbackRate);
       // resume() is invoked in this synchronous gesture turn, before any await.
+      this.gapless.setSpectrumEnabled(this.spectrumEnabled, this.spectrumResponsive);
       const unlocked = this.gapless.unlock();
       await Promise.all([unlocked, this.reconcileBgm()]);
       if (request !== this.operation || this.disposed) return;
@@ -971,13 +1165,13 @@ export class MusicPlayer {
       }
       this.gapless?.stop(); this.gaplessWarning(error);
       this.pendingSeek = position > 0 ? position : null;
-      await this.play(track.id);
+      await this.play(queueEntryKey(track));
     } finally { if (this.preparation === controller) this.preparation = undefined; }
   }
 
   private prepareSuccessor(): void {
     if (this.disposed || this.value.songTransitionMode !== "gapless" || this.gaplessFallback || this.transport !== "playing") return;
-    const next = this.value.queue[this.value.currentIndex + 1];
+    const next = this.successor();
     const operation = this.operation;
     if (this.value.backend === "browser") {
       void this.gapless?.prepareNext(next).catch(error => {
@@ -989,8 +1183,8 @@ export class MusicPlayer {
       const generation = this.nativePrepareGeneration;
       void cancelled.then(() => {
         if (generation !== this.nativePrepareGeneration || this.disposed || operation !== this.operation) return;
-        const next = this.value.queue[this.value.currentIndex + 1];
-        if (!next) return;
+        const next = this.successor();
+        if (!next || next.queueEntry) return;
         this.nativePreparedId = next.id;
         return this.nativeCommand({ action: "prepareNext", trackId: next.id, afterTrackId: this.value.currentTrack?.id });
       }).catch(error => {
@@ -1015,9 +1209,10 @@ export class MusicPlayer {
   }
 
   private adoptNativePosition(state: NativeState, successor?: string): void {
+    if (Number.isSafeInteger(state.boundarySerial)) this.nativeBoundarySerial = state.boundarySerial!;
     if (state.trackId !== this.value.currentTrack?.id && state.trackId === successor) {
       const index = this.value.queue.findIndex(track => track.id === state.trackId);
-      if (index >= 0) { this.value.currentIndex = index; this.value.currentTrack = this.value.queue[index]; }
+      if (index >= 0) { this.rememberTrack(state.trackId); this.value.currentIndex = index; this.value.currentTrack = this.value.queue[index]; }
       else {
         this.stop(); this.value.currentTrack = null; this.value.currentIndex = -1; this.value.duration = 0;
         this.emit(); return;
@@ -1038,7 +1233,7 @@ export class MusicPlayer {
   private async playNative(track: MusicTrack, queue: readonly MusicTrack[], index: number): Promise<void> {
     const request = ++this.operation;
     const cancelled = this.cancelNativeNext(false);
-    const same = this.value.currentTrack?.id === track.id;
+    const same = queueEntryKey(this.value.currentTrack) === queueEntryKey(track);
     if (!same) this.pendingSeek = null;
     this.value.queue = [...queue]; this.value.currentTrack = track; this.value.currentIndex = index;
     this.value.loading = true; this.value.playing = false; this.value.error = null;
@@ -1050,6 +1245,7 @@ export class MusicPlayer {
       const state = await this.nativeCommand({ action: "play", trackId: track.id, deviceId: this.value.outputDeviceId, volume: this.value.volume, transitionMode: this.value.songTransitionMode });
       if (request !== this.operation || this.disposed) return;
       this.nativeEndedSerial = state.endedSerial;
+      this.nativeBoundarySerial = state.boundarySerial ?? 0;
       this.value.duration = state.duration; this.value.currentTime = state.currentTime;
       this.value.playing = state.playing; this.value.loading = false;
       this.transport = state.playing ? "playing" : "paused";
@@ -1073,22 +1269,23 @@ export class MusicPlayer {
         if (request === this.operation && this.transport === "playing" && state.trackId !== this.value.currentTrack?.id) {
           const index = this.value.queue.findIndex(track => track.id === state.trackId);
           if ((state.trackId === this.nativePreparedId || state.trackId === this.nativeHandoffId) && index >= 0) {
+            this.rememberTrack(state.trackId);
             this.value.currentTrack = this.value.queue[index]; this.value.currentIndex = index;
             if (state.playing) this.prepareSuccessor();
           } else throw new Error("CoreAudio 播放进程已重启或状态已改变，请重新播放");
         }
         if (request === this.operation && state.trackId === this.value.currentTrack?.id && this.transport !== "loading") {
           if (state.error) throw new Error(state.error);
+          const repeatedBoundary = this.value.songTransitionMode === 'gapless' && this.nativePreparedId === state.trackId && state.playing && Number.isSafeInteger(state.boundarySerial) && state.boundarySerial !== this.nativeBoundarySerial;
+          if (Number.isSafeInteger(state.boundarySerial)) this.nativeBoundarySerial = state.boundarySerial!;
           this.value.currentTime = state.currentTime; this.value.duration = state.duration;
           this.value.playing = state.playing;
+          if (repeatedBoundary) { this.nativePreparedId = undefined; this.prepareSuccessor(); }
           if (state.endedSerial !== this.nativeEndedSerial && this.transport === "playing") {
             this.nativeEndedSerial = state.endedSerial;
-            const next = this.value.queue[this.value.currentIndex + 1];
-            if (next) {
-              if (this.value.songTransitionMode === "gapless") this.gaplessWarning();
-              void this.play(next.id);
-            }
-            else { this.transport = "idle"; this.value.playing = false; void this.reconcileBgm(); }
+            if (this.value.songTransitionMode === "gapless") this.gaplessWarning();
+            this.transport = "loading";
+            void this.advance(true);
           }
           this.emit();
         }
@@ -1105,6 +1302,7 @@ export class MusicPlayer {
   private onGesture = (): void => {
     if (this.disposed) return;
     this.gestureReceived = true;
+    this.spectrum.unlock();
     void this.reconcileBgm();
   };
 

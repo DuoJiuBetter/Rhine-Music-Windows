@@ -1,3 +1,4 @@
+@import './music-song-actions.css';
 .search-sources { display: flex; gap: 8px; margin-bottom: 16px; }
 .search-sources button { padding: 7px 14px; border: 1px solid var(--line); font-size: 11px; }
 .search-sources button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -6,11 +7,20 @@
 .online-search-form button { flex-shrink: 0; padding: 0 16px; }
 .online-search-note, .online-search-status { font-size: 11px; line-height: 1.7; color: var(--muted); margin: 12px 0; }
 .online-search-status { min-height: 19px; }
-.online-song { position: relative; }
-.online-song .album-result { grid-template-columns: 49px 1fr 54px 14px; padding-bottom: 25px; }
-.music-app .online-source-link, .online-source-link { position: absolute; bottom: 5px; right: 0; font-size: 10px; line-height: 1.4; color: var(--muted); }
+.online-song { position: relative; border-bottom: 1px solid var(--line); }
+.online-song-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.online-song .album-result { flex: 1; min-width: 0; grid-template-columns: 49px minmax(0, 1fr) 54px; border-bottom: 0; padding-bottom: 12px; }
+.online-song .row-song-actions { padding-right: 2px; }
+.online-song .result-copy { min-width: 0; }
+@media (max-width: 520px) {
+  .online-song-row { gap: 5px; }
+  .online-song .album-result { grid-template-columns: 38px minmax(0, 1fr); gap: 8px; }
+  .online-song .result-cover { width: 38px; height: 38px; }
+  .online-song .album-result em { display: none; }
+  .online-song .row-song-actions { gap: 3px; }
+  .online-song .row-song-action { width: 29px; height: 32px; }
+}
 .online-song button[aria-pressed="true"] { color: var(--accent); }
-.online-source-link:hover { color: var(--accent); }
 .online-search-pages { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; }
 .online-search-pages button { padding: 8px 12px; border: 1px solid var(--line); font-size: 11px; }
 #online-results [disabled] { opacity: .45; cursor: wait; }

@@ -1,0 +1,8 @@
+/* No persistent focus rectangle after a player action. Native text editing
+ * and intentional keyboard navigation keep their behavior without the frame. */
+.music-app :is(button, a, input, textarea, select, summary, [tabindex]):is(:focus, :focus-visible),
+.rhine-loading :is(button, a):is(:focus, :focus-visible),
+.viewer-surface :is(button, a):is(:focus, :focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}

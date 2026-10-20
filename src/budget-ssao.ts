@@ -31,6 +31,12 @@ export class BudgetSSAOPass extends SSAOPass {
   constructor(...args: ConstructorParameters<typeof SSAOPass>) {
     super(...args);
     this.originalBlur = this.blurMaterial.fragmentShader;
+    // One program for both stationary and moving frames; no kernel recompile.
+    this.ssaoMaterial.uniforms.activeKernelSize={value:this.kernel.length};
+    this.ssaoMaterial.fragmentShader='uniform float activeKernelSize;\n'+this.ssaoMaterial.fragmentShader
+      .replace('for ( int i = 0; i < KERNEL_SIZE; i ++ ) {',
+        'for ( int i = 0; i < KERNEL_SIZE; i ++ ) { if (float(i) >= activeKernelSize) break;')
+      .replace('occlusion / float( KERNEL_SIZE )','occlusion / activeKernelSize');
     this.budgetBlur = /* glsl */ `
       varying vec2 vUv;
       uniform sampler2D tDiffuse;
@@ -104,6 +110,10 @@ export class BudgetSSAOPass extends SSAOPass {
 
   setContactStrength(value: number) {
     this.copyMaterial.uniforms.contactStrength.value = value;
+  }
+  setMotionBudget(strength: number) {
+    const full=this.kernel.length;
+    this.ssaoMaterial.uniforms.activeKernelSize.value=Math.max(1,Math.round(full+(Math.min(4,full)-full)*strength));
   }
 
   setSamplingScale(value: number) {

@@ -58,7 +58,7 @@ try {
   const played = await page.evaluate(() => window.played); assert.equal(played[0].track.id, 'netease-123'); assert.equal(played[0].queue.length, 1);
   await page.evaluate(() => window.search.setPlayback('netease-123', true, false));
   assert.equal(await page.locator('[data-online-track]').getAttribute('aria-pressed'), 'true');
-  assert.equal(await page.locator('[data-online-track] i').textContent(), 'Ⅱ');
+  assert.equal(await page.locator('[data-online-track] i').getAttribute('data-song-action-icon'), 'pause');
   await page.getByRole('button', { name: '下一页 →' }).click(); await page.getByRole('status').filter({ hasText: '第 2 页' }).waitFor();
   assert.deepEqual(calls.at(-1), { q: '中文歌手', offset: 20 });
   await search('slow'); await page.waitForFunction(() => document.querySelector('#online-results').getAttribute('aria-busy') === 'true');

@@ -62,6 +62,10 @@ export function setupMusicTitleLayout(root: HTMLElement) {
   visual.className = "music-title-rolling";
   visual.setAttribute("aria-hidden", "true");
   title.replaceChildren(spacer, visual);
+  const rapidTitle=document.createElement('span');
+  rapidTitle.className='music-title-rapid';rapidTitle.hidden=true;
+  rapidTitle.style.cssText='-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;';
+  title.append(rapidTitle);
   const reels = createTitleReels(visual, spacer);
   // An h1 sibling shares every responsive title rule, but never inherits the
   // fitted --album-title-size of the visible title or contributes to flex flow.
@@ -80,7 +84,8 @@ export function setupMusicTitleLayout(root: HTMLElement) {
   let text = "",
     displayed = "",
     enabled = false,
-    animateNext = false;
+    animateNext = false,
+    rapid = false;
   let scheduled = 0,
     destroyed = false,
     bottomGap = -1,
@@ -252,7 +257,7 @@ export function setupMusicTitleLayout(root: HTMLElement) {
 
   const layout = () => {
     scheduled = 0;
-    if (destroyed) return;
+    if (destroyed || rapid) return;
     if (!text) {
       reels.render([], 0, enabled && animateNext);
       displayed = "";
@@ -341,7 +346,7 @@ export function setupMusicTitleLayout(root: HTMLElement) {
     appliedViewport = viewport;
   };
   const schedule = () => {
-    if (!destroyed && !scheduled) scheduled = requestAnimationFrame(layout);
+    if (!destroyed && !rapid && !scheduled) scheduled = requestAnimationFrame(layout);
   };
   const resize = new ResizeObserver(schedule);
   resize.observe(root);
@@ -358,8 +363,17 @@ export function setupMusicTitleLayout(root: HTMLElement) {
   document.fonts.addEventListener("loadingdone", fontsChanged);
   void document.fonts.ready.then(fontsChanged);
   return {
+    setRapid(next: boolean) {
+      if(rapid===next)return;
+      rapid=next;
+      rapidTitle.hidden=!next;spacer.hidden=visual.hidden=next;
+      rapidTitle.style.display=next?'-webkit-box':'none';
+      if(next){cancelAnimationFrame(scheduled);scheduled=0;reels.finish();rapidTitle.textContent=text;}
+      else {animateNext=false;schedule();}
+    },
     update(next: string, animated: boolean) {
       enabled = animated;
+      if(rapid){text=next;rapidTitle.textContent=next;title.title=next;title.setAttribute('aria-label',next);return;}
       if (next === text) {
         if (!enabled) reels.finish();
         return;

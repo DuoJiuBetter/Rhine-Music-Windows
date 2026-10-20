@@ -53,6 +53,11 @@ export function neteaseTrack(song) {
 // Reuse the pinned SDK's endpoint modules and protocol implementation. Only these
 // modules load on demand; its Express server and unrelated endpoints never start.
 let sdk;
+export function neteasePlaylistSongs(query, request, op) {
+  return request('/api/playlist/manipulate/tracks', { op, pid: query.pid || query.id,
+    trackIds: JSON.stringify(query.ids.split(',')), imme: 'true',
+  }, require('NeteaseCloudMusicApi/util/option.js')(query));
+}
 export async function sdkCall(method, params, signal) {
   sdk ??= { search: require('NeteaseCloudMusicApi/module/cloudsearch.js'),
     playback: require('NeteaseCloudMusicApi/module/song_url_v1.js'),
@@ -60,20 +65,33 @@ export async function sdkCall(method, params, signal) {
     qrCreate: require('NeteaseCloudMusicApi/module/login_qr_create.js'),
     qrCheck: require('NeteaseCloudMusicApi/module/login_qr_check.js'),
     status: require('NeteaseCloudMusicApi/module/login_status.js'),
+    accountProfile: require('NeteaseCloudMusicApi/module/user_account.js'),
     playlists: require('NeteaseCloudMusicApi/module/user_playlist.js'),
     playlistDetail: require('NeteaseCloudMusicApi/module/playlist_detail.js'),
+    playlistCreate: require('NeteaseCloudMusicApi/module/playlist_create.js'),
+    playlistRename: require('NeteaseCloudMusicApi/module/playlist_name_update.js'),
+    playlistDelete: require('NeteaseCloudMusicApi/module/playlist_delete.js'),
+    // playlist_track_add/delete are video endpoints. Songs use playlist_tracks;
+    // retain its verified payload without retrying a non-idempotent write.
+    playlistRemove: (query, request) => neteasePlaylistSongs(query, request, 'del'),
+    playlistAdd: (query, request) => neteasePlaylistSongs(query, request, 'add'),
+    togetherStatus: require('NeteaseCloudMusicApi/module/listentogether_status.js'),
+    togetherCreate: require('NeteaseCloudMusicApi/module/listentogether_room_create.js'),
+    togetherJoin: require('NeteaseCloudMusicApi/module/listentogether_accept.js'),
+    togetherEnd: require('NeteaseCloudMusicApi/module/listentogether_end.js'),
+    togetherHeartbeat: require('NeteaseCloudMusicApi/module/listentogether_heatbeat.js'),
+    togetherPlaylist: require('NeteaseCloudMusicApi/module/listentogether_sync_playlist_get.js'),
+    togetherQueue: require('NeteaseCloudMusicApi/module/listentogether_sync_list_command.js'),
+    togetherCommand: require('NeteaseCloudMusicApi/module/listentogether_play_command.js'),
     songDetail: require('NeteaseCloudMusicApi/module/song_detail.js'),
     album: require('NeteaseCloudMusicApi/module/album.js'),
     lyric: require('NeteaseCloudMusicApi/module/lyric.js'),
     crypto: require('NeteaseCloudMusicApi/util/crypto.js') };
   const cookie = params.cookie || {};
   return sdk[method]({ ...params, cookie }, async (uri, data, options) => {
-    // The pinned SDK requests 100,000 embedded tracks even though our playlist
-    // pages only need the complete trackIds array. Keep its endpoint/protocol,
-    // but avoid downloading thousands of song details that we discard.
-    if (method === 'playlistDetail' && uri === '/api/v6/playlist/detail') {
-      data = { ...data, n: PLAYLIST_EMBEDDED_TRACKS, s: params.s ?? data.s };
-    }
+    // trackIds are complete regardless of n; avoid the SDK's 100000 embedded
+    // song details when reading or checking playlist ownership before a write.
+    if (method === 'playlistDetail') data = { ...data, n: PLAYLIST_EMBEDDED_TRACKS, s: params.s ?? 8 };
     const header = { os: 'pc', appver: '3.1.17.204416', deviceId: params.deviceId || randomUUID(), versioncode: '140',
       resolution: '1920x1080', __csrf: cookie.__csrf || '', channel: 'netease', requestId: `${Date.now()}_0000`,
       ...(cookie.MUSIC_U ? { MUSIC_U: cookie.MUSIC_U } : {}), ...(cookie.MUSIC_A ? { MUSIC_A: cookie.MUSIC_A } : {}) };
@@ -107,7 +125,7 @@ export class NeteaseOnline {
     this.auth = new NeteaseAuth({ call: (method, params) => this.rawRequest(method, params), dataDir, sessionStore, now,
       changed: () => { this.cache.clear(); this.inFlight.clear(); this.songInfoCache?.clear(); this.songInfoPending?.clear(); this.playlistCache?.clear(); this.ownedPlaylists?.clear(); this.playlistEpoch = undefined; } });
   }
-  async rawRequest(method, params) {
+  async rawRequest(method, params, expectedEpoch) {
     if (this.active >= 4) {
       if (this.waiting.length >= 16) throw error('在线请求正在处理中，请稍后重试。', 429);
       await new Promise((resolve, reject) => {
@@ -123,6 +141,7 @@ export class NeteaseOnline {
       });
     } else this.active++;
     try {
+      if (expectedEpoch !== undefined) this.checkScope(expectedEpoch);
       const result = await traceOnlineRequest('netease', method, () => this.call(method, params, AbortSignal.timeout(this.timeoutMs)), { timeoutMs: this.timeoutMs });
       return result;
     } catch (failure) {
@@ -138,9 +157,10 @@ export class NeteaseOnline {
       if (next) next.start(); else this.active--;
     }
   }
-  async request(method, params) {
+  async request(method, params, expectedEpoch) {
     await this.auth.ready;
-    const result = await this.rawRequest(method, { ...params, cookie: this.auth.cookie, deviceId: this.auth.deviceId });
+    if (expectedEpoch !== undefined) this.checkScope(expectedEpoch);
+    const result = await this.rawRequest(method, { ...params, cookie: this.auth.cookie, deviceId: this.auth.deviceId }, expectedEpoch);
     if (result?.body?.code !== 200) {
       const rawCode = result?.body?.code;
       const code = typeof rawCode === 'number' && Number.isInteger(rawCode) || typeof rawCode === 'string' && /^-?\d{1,6}$/.test(rawCode) ? rawCode : 'MISSING_CODE';
@@ -232,6 +252,22 @@ export class NeteaseOnline {
     if (this.playlistEpoch !== this.auth.epoch) { this.playlistEpoch = this.auth.epoch; this.ownedPlaylists = new Map(); this.playlistCache = new Map(); }
     return { uid, epoch: this.auth.epoch };
   }
+  async realtimeCredentials(epoch) {
+    this.checkScope(epoch);
+    const cookie = Object.entries(this.auth.cookie).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('; ');
+    const response = await fetch('https://interface3.music.163.com/api/middle/im/token/get?bizName=music_listenTogether', {
+      dispatcher: neteaseDispatcher, redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs),
+      headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        Cookie: `${cookie}; os=osx; osver=15.5; appver=3.1.10.5100; channel=netease; versioncode=140` },
+    });
+    this.checkScope(epoch);
+    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw error(`网易云聊天授权失败（HTTP ${response.status}）。`); }
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) { size += chunk.byteLength; if (size > 524288) throw error('网易云聊天授权响应过大。'); chunks.push(chunk); }
+    let body; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw error('网易云聊天授权响应格式异常。'); }
+    if (body.code !== 200 || typeof body.data?.accId !== 'string' || typeof body.data?.token !== 'string' || body.data.token.length > 8192) throw error(`网易云聊天授权未成功（${Number(body.code) || 0}）。`);
+    this.checkScope(epoch); return { accId: body.data.accId, token: body.data.token };
+  }
   checkScope(epoch) { if (epoch !== this.auth.epoch || !this.auth.cookie.MUSIC_U) throw error('登录状态已改变，请重新读取歌单。', 409); }
   async playlists(offset = 0) {
     if (!Number.isInteger(offset) || offset < 0 || offset > 5000 || offset % 100) throw error('无效的歌单分页。', 400);
@@ -242,12 +278,14 @@ export class NeteaseOnline {
       if (!/^[1-9]\d{0,15}$/.test(String(item?.id))) return [];
       const value = { id: String(item.id), name: clean(item.name) || '未命名歌单',
         trackCount: Math.min(100000, Math.max(0, Math.floor(Number(item.trackCount) || 0))),
-        coverUrl: neteaseCoverUrl(item.coverImgUrl), owned: String(item.creator?.userId) === uid };
+        coverUrl: neteaseCoverUrl(item.coverImgUrl), owned: String(item.creator?.userId) === uid,
+        specialType: Number(item.specialType) || 0 };
       this.ownedPlaylists.set(value.id, value); return [value];
     });
     return { provider: 'netease', playlists, offset, limit: 100, hasMore: body.more === true };
   }
   async playlistTracks(value, offset = 0) {
+    const revision = this.playlistWriteRevision || 0;
     const id = songId(value);
     if (!Number.isInteger(offset) || offset < 0 || offset >= 100000 || offset % 50) throw error('无效的歌单歌曲分页。', 400);
     const { epoch } = await this.accountScope();
@@ -261,7 +299,7 @@ export class NeteaseOnline {
       const body = await this.request('playlistDetail', { id, s: 0 }); this.checkScope(epoch);
       if (!Array.isArray(body.playlist?.trackIds)) throw error('网易云歌单歌曲列表格式发生变化。');
       ids = body.playlist.trackIds.slice(0, 100000).map(item => /^[1-9]\d{0,15}$/.test(String(item?.id)) ? String(item.id) : null);
-      this.playlistCache.set(detailKey, { at: this.now(), value: ids });
+      if (revision === (this.playlistWriteRevision || 0)) this.playlistCache.set(detailKey, { at: this.now(), value: ids });
       const details = [...this.playlistCache.keys()].filter(key => key.endsWith(':ids'));
       while (details.length > 8) this.playlistCache.delete(details.shift());
     }
@@ -272,7 +310,7 @@ export class NeteaseOnline {
     const songs = new Map(body.songs.flatMap(song => { const track = neteaseTrack(song); return track ? [[track.onlineSource.id, track]] : []; }));
     const result = { provider: 'netease', playlistId: id, offset, limit: 50, total: ids.length,
       hasMore: offset + 50 < ids.length, tracks: pageIds.map(id => songs.get(id) || null) };
-    this.playlistCache.set(key, { at: this.now(), value: result });
+    if (revision === (this.playlistWriteRevision || 0)) this.playlistCache.set(key, { at: this.now(), value: result });
     while (this.playlistCache.size > 128) this.playlistCache.delete(this.playlistCache.keys().next().value);
     return result;
   }

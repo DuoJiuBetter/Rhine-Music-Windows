@@ -5,7 +5,6 @@ export type MusicWheelInput = Pick<
 >;
 
 const PIXELS_PER_ALBUM = 48;
-const MAX_ALBUMS_PER_EVENT = 3;
 const GESTURE_GAP_MS = 200;
 
 export function musicWheelDelta(event: MusicWheelInput, pageHeight: number) {
@@ -51,14 +50,44 @@ export class MusicWheelSteps {
     }
     this.lastTime = now;
     this.direction = direction;
-    // Accumulate small trackpad deltas, while a single oversized wheel/page
-    // event can never jump dozens of albums or leave a delayed input backlog.
+    // Keep small trackpad deltas, but treat a mouse notch/page event as one
+    // adjacent album regardless of the Windows scroll-distance setting.
     this.remainder +=
-      Math.min(Math.abs(delta), PIXELS_PER_ALBUM * MAX_ALBUMS_PER_EVENT) *
+      Math.min(Math.abs(delta), PIXELS_PER_ALBUM) *
       direction;
     const steps = Math.trunc(this.remainder / PIXELS_PER_ALBUM);
     this.remainder -= steps * PIXELS_PER_ALBUM;
     return steps || 0;
+  }
+}
+
+/** Coalesce a burst into one adjacent step; never accumulate multi-album jumps. */
+export class MusicWheelDispatch {
+  private pending = 0;
+  private lastTime = -Infinity;
+  private lastDirection = 0;
+  private timer?: ReturnType<typeof setTimeout>;
+  private navigate: (steps: number) => void;
+  constructor(navigate: (steps: number) => void) { this.navigate = navigate; }
+  push(steps: number, now = performance.now()) {
+    if (!Number.isFinite(steps) || !steps) return;
+    const direction = Math.sign(steps);
+    if (direction !== this.lastDirection || now < this.lastTime) this.reset();
+    this.lastDirection = direction;
+    // Even several notches within this window commit only an adjacent target.
+    // Do not replay a queue after the user's wheel has stopped.
+    this.pending = direction;
+    if (now - this.lastTime >= 80) this.flush(now);
+    else if (this.timer === undefined) this.timer = setTimeout(() => this.flush(performance.now()), 80 - (now - this.lastTime));
+  }
+  private flush(now: number) {
+    clearTimeout(this.timer); this.timer = undefined;
+    const steps = this.pending; this.pending = 0;
+    if (steps) { this.lastTime = now; this.navigate(steps); }
+  }
+  reset() {
+    clearTimeout(this.timer); this.timer = undefined;
+    this.pending = 0; this.lastTime = -Infinity; this.lastDirection = 0;
   }
 }
 
@@ -110,7 +139,10 @@ export function mountMusicWheelNavigation(
 ) {
   const steps = new MusicWheelSteps();
   let context: string | number | undefined;
-  const reset = () => steps.reset();
+  const dispatch = new MusicWheelDispatch(direction => {
+    if (options.enabled() && options.context?.() === context) options.navigate(direction);
+  });
+  const reset = () => { steps.reset(); dispatch.reset(); };
   const onWheel = (event: WheelEvent) => {
     if (
       event.defaultPrevented ||
@@ -130,13 +162,16 @@ export function mountMusicWheelNavigation(
     context = nextContext;
     event.preventDefault();
     const direction = steps.consume(delta, performance.now());
-    if (direction) options.navigate(direction);
+    if (direction) dispatch.push(direction);
   };
   // Bubble only: controls can retain wheel ownership with stopPropagation.
   stage.addEventListener("wheel", onWheel, { passive: false });
   stage.addEventListener("pointerdown", reset, { passive: true });
   stage.addEventListener("keydown", reset);
   window.addEventListener("blur", reset);
+  const owner = stage.ownerDocument;
+  const onHidden = () => { if (owner.hidden) reset(); };
+  owner?.addEventListener("visibilitychange", onHidden);
   return {
     reset,
     dispose() {
@@ -145,6 +180,7 @@ export function mountMusicWheelNavigation(
       stage.removeEventListener("pointerdown", reset);
       stage.removeEventListener("keydown", reset);
       window.removeEventListener("blur", reset);
+      owner?.removeEventListener("visibilitychange", onHidden);
     },
   };
 }

@@ -70,15 +70,19 @@ function fixture(selectedRow = 12) {
   const methods = new Function(...Object.keys(deps), compiled)(...Object.values(deps));
   const host = {
     ...methods, loaded: true, looping: true, reduced: false, musicArrayMode: 'realistic',
-    musicColumnCounts: counts, musicOverview: { value: 0 }, musicRealColumns: new MusicRealColumns(),
+    musicColumnCounts: counts, musicOverview: { value: 0, active: false }, musicRealColumns: new MusicRealColumns(),
     selectedCell: { lane: 2, row: selectedRow }, coordinateOrigin: { lane: 0, row: 0 },
     poolRows: loop.MUSIC_LOOP_ROWS, cells: Array.from({ length: count }, (_, i) => loop.poolCell(i, loop.MUSIC_LOOP_ROWS)),
     positions: Array.from({ length: count }, () => new THREE.Vector3()),
     rail: { value: -2.17 - (selectedRow - 15.5) * loop.ROW_SPACING, velocity: 0 },
     columnCamera: { value: 0, velocity: 0 }, shoulder: { value: selectedRow, velocity: 0 }, laneFocus: { value: 2, velocity: 0 },
     dummy: new THREE.Object3D(), columnExtentOffset: new THREE.Vector3(), model: new THREE.Group(),
-    instances: [shell], coverIds: [], covers: { array: cover, setSlot(i, record) { host.coverIds[i] = record?.id; } },
+    instances: [shell], coverIds: [], covers: { array: cover, setFrameBudget() {}, setSlot(i, record) { host.coverIds[i] = record?.id; } },
     scene: new THREE.Scene(), appearance: { apply() {}, setClarity() {}, dispose() {} },
+    musicArchiveMotion: { active: false }, musicPlacement: { settled: true },
+    // This fixture checks exact matrix ownership, independently of screen-space retirement.
+    returningBudget: { canRetire: () => false }, renderer: { domElement: { width: 1280, height: 800 } },
+    recycleReturningModel(group) { group.removeFromParent(); },
     lift: { value: .9, velocity: 0 }, outgoing: [], rotation: 0, targetDetail: 0, targetReveal: 1,
     idleGain: 1, pulseGain: 1, scanBlend: 0, scanTime: 40, pulses: [], deferSelectionPulse: true,
     lastInteraction: -100, clock: 0,

@@ -29,7 +29,7 @@ function fixture(t) {
     resume: async () => { context.state = 'running' }, close: async () => { context.closed = true },
     createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
     createBufferSource: () => {
-      const source = { stopped: false, connect() {}, disconnect() {}, stop() { this.stopped = true },
+      const source = { playbackRate: { value: 1 }, stopped: false, connect() {}, disconnect() {}, stop() { this.stopped = true },
         start(at, offset) { this.at = at; this.offset = offset }, onended: null }
       sources.push(source); return source
     },
@@ -49,6 +49,26 @@ function fixture(t) {
   t.after(() => { player.dispose(); globalThis.fetch = original })
   return { player, context, calls, sources, events, holdDecode(promise) { heldDecode = promise } }
 }
+
+test('gapless spectrum observes the existing mix without changing scheduling or disconnecting output',async t=>{
+  const f=fixture(t),connections=[],disconnections=[];
+  f.player.gain.connect=node=>connections.push(node);
+  f.player.gain.disconnect=node=>disconnections.push(node);
+  const analyser={getByteFrequencyData(data){data.fill(90);},disconnect(){}};
+  f.context.createAnalyser=()=>analyser;
+  f.player.setSpectrumEnabled(true);f.player.setSpectrumEnabled(true);
+  assert.deepEqual(connections,[analyser]);
+  f.player.setSpectrumEnabled(true,true);assert.equal(analyser.smoothingTimeConstant,.25);assert.equal(analyser.maxDecibels,-10);assert.equal(analyser.fftSize,4096);
+  f.player.setSpectrumEnabled(true);assert.equal(analyser.smoothingTimeConstant,.7);assert.equal(analyser.maxDecibels,-30);assert.equal(analyser.fftSize,1024);
+  assert.deepEqual(connections,[analyser],'response changes leave the scheduled mix route intact');
+  await f.player.play(track('a'),0,new AbortController().signal);
+  await f.player.prepareNext(track('b'));
+  assert.equal(f.sources[1].at,f.sources[0].at+.1);
+  const data=new Uint8Array(512);assert.equal(f.player.readSpectrum(data),true);assert.equal(data[0],90);
+  f.player.setSpectrumEnabled(false);assert.deepEqual(disconnections,[analyser]);
+  assert.equal(f.player.readSpectrum(data),false);assert.ok(data.every(v=>v===0));
+  assert.equal(f.sources.some(s=>s.stopped),false,'turning off analysis leaves both scheduled sources running');
+});
 
 test('next source is scheduled on the exact audio boundary before any ended callback', async t => {
   const f = fixture(t)
@@ -213,7 +233,7 @@ test('manual next at an unobserved audio boundary selects c once, rather than re
   await f.transport.next(); await settle()
   assert.equal(f.transport.state.currentTrack.id, 'c')
   assert.equal(f.transport.state.currentTime, 0)
-  assert.equal(f.sources.filter(source => !source.stopped).length, 1)
+  assert.equal(f.sources.filter(source => !source.stopped).length, 2, 'c plus the prepared wrap to a')
 })
 
 test('production queue deletion while next decoding is held cannot play the deleted song', async t => {
@@ -225,9 +245,9 @@ test('production queue deletion while next decoding is held cannot play the dele
   await settle()
   f.transport.setQueue([f.tracks[0]])
   release(); await settle()
-  assert.equal(f.sources.length, 1)
+  assert.equal(f.sources.length, 2, 'only a and its loop successor survive; deleted b never schedules')
   f.context.currentTime = .16; f.sources[0].onended()
-  assert.equal(f.transport.state.transport, 'idle')
+  assert.equal(f.transport.state.transport, 'playing')
   assert.equal(f.transport.state.currentTrack.id, 'a')
 })
 
@@ -318,3 +338,65 @@ test('clock suspension during decoding stays paused until an explicit resume', a
   assert.equal(f.transport.state.transport, 'playing')
   assert.equal(f.sources.length, 1)
 })
+
+
+test('production gapless wraps c to a with an already-scheduled source', async t => {
+  const f = transportFixture(t);
+  await f.transport.play('c',f.tracks); await settle();
+  assert.equal(f.sources.length,2);
+  f.context.currentTime=.16; f.sources[0].onended(); await settle();
+  assert.equal(f.transport.state.currentTrack.id,'a');
+  assert.equal(f.transport.state.transport,'playing');
+  assert.equal(f.transport.state.transitionWarning,null);
+  assert.equal(f.sources.length,3,'only b is newly prepared after wrapping');
+});
+
+test('single repeat pre-schedules the same song and manual next still advances',async t=>{
+  const f=transportFixture(t);f.transport.setPlaybackMode('repeat-one');
+  await f.transport.play('a',f.tracks);await settle();
+  assert.equal(f.sources.length,2);assert.equal(f.sources[1].at,f.sources[0].at+.1);
+  f.context.currentTime=.16;f.sources[0].onended();await settle();
+  assert.equal(f.transport.state.currentTrack.id,'a');assert.equal(f.transport.state.transport,'playing');
+  assert.equal(f.sources.length,3);assert.ok(Math.abs(f.sources[2].at-.24)<1e-12);assert.equal(f.transport.state.transitionWarning,null);
+  await f.transport.next();await settle();assert.equal(f.transport.state.currentTrack.id,'b');
+});
+
+test('shuffle gapless reserves a consistent successor and replaces preparation on mode toggle', async t => {
+  const f = transportFixture(t);
+  f.transport.setPlaybackMode('shuffle');
+  await f.transport.play('a',f.tracks); await settle();
+  const reserved = f.transport.nextChoice.id;
+  assert.notEqual(reserved,'a');
+  f.context.currentTime=.16; f.sources[0].onended(); await settle();
+  assert.equal(f.transport.state.currentTrack.id,reserved);
+  f.transport.setPlaybackMode('sequential'); await settle();
+  assert.equal(f.transport.state.playbackMode,'sequential');
+  assert.equal(f.transport.state.transport,'playing');
+  const next=f.tracks[(f.tracks.findIndex(track=>track.id===reserved)+1)%3].id;
+  f.context.currentTime=.26;
+  f.sources[1].onended(); await settle();
+  assert.equal(f.transport.state.currentTrack.id,next);
+});
+
+
+test('temporary gapless rate preserves position and schedules the successor on the accelerated boundary', async t=>{
+  const f=fixture(t);
+  await f.player.play(track('a'),0,new AbortController().signal);
+  await f.player.prepareNext(track('b'));
+  f.context.currentTime=.08;
+  const position=f.player.position;
+  f.player.setPlaybackRate(2);
+  assert.ok(Math.abs(f.player.position-position)<1e-9,'Rate change retains the sampled media position');
+  assert.equal(f.sources[0].stopped,true);assert.equal(f.sources[1].stopped,true);
+  const fast=f.sources.at(-1);assert.equal(fast.playbackRate.value,2);
+  await f.player.prepareNext(track('b'));
+  const next=f.sources.at(-1);
+  assert.ok(Math.abs(next.at-(fast.at+(.1-position)/2))<1e-9);
+  f.context.currentTime=.09;
+  assert.ok(Math.abs(f.player.position-(position+.01*2))<1e-9);
+  const restore=f.player.position;f.player.setPlaybackRate(1);
+  assert.ok(Math.abs(f.player.position-restore)<1e-9);
+  assert.equal(f.sources.at(-1).playbackRate.value,1);
+  await f.player.prepareNext(track('b'));
+  assert.ok(Math.abs(f.sources.at(-1).at-(.09+.1-restore))<1e-9);
+});

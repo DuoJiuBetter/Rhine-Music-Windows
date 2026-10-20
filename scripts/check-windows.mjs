@@ -66,7 +66,7 @@ test('GPU timer remains asynchronous, bounded, and rejects disjoint measurements
     createQuery: () => ({ id: ++created }), deleteQuery: () => deleted++, beginQuery: () => starts++, endQuery: () => ends++ };
   const timer = new GpuFrameTiming(gl);
   for (let i = 0; i < 100; i++) { timer.begin(); timer.end(); }
-  assert.equal(created, 8); assert.equal(starts, ends);
+  assert.equal(created, 16); assert.equal(starts, ends);
   available = true; timer.begin(); timer.end();
   assert.equal(timer.snapshot().gpuP95, 2.5);
   disjoint = true; timer.begin(); timer.end();

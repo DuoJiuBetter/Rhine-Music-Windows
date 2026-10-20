@@ -1,0 +1,39 @@
+.song-add-playlist { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; margin-left: auto; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.song-add-playlist svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.song-add-playlist:hover { color: var(--accent); }
+.song-add-playlist:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+#song-together-view { font-size: 13px; }
+#song-together-view[hidden] { display: none; }
+.together-welcome h3 { font-size: 20px; font-weight: 500; margin-bottom: 24px; }
+.together-welcome form { display: flex; align-items: end; gap: 12px; margin-top: 28px; }
+.together-welcome label { flex: 1; color: var(--muted); font-size: 12px; }
+.together-welcome input { display: block; width: 100%; box-sizing: border-box; margin-top: 10px; }
+#song-together-view input { background: color-mix(in srgb, var(--surface) 65%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 11px 12px; color: var(--ink); min-width: 0; font: inherit; }
+#song-together-view button { color: var(--ink); cursor: pointer; }
+#song-together-view button:disabled { opacity: .4; cursor: default; }
+.together-room-heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.together-room-heading strong { font-size: 18px; font-weight: 500; }
+.together-room-heading small { display: block; color: var(--muted); margin-top: 6px; }
+.together-room-heading button { padding: 8px; font-size: 12px; }
+.together-room-heading [data-together="leave"] { color: var(--muted); }
+.together-members { display: flex; gap: 18px; flex-wrap: wrap; margin: 18px 0; }
+.together-members span { display: flex; align-items: center; gap: 8px; }
+.together-members img { width: 28px; height: 28px; border-radius: 50%; }
+.together-queue-summary, .together-status, .together-connection-error { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.together-connection-error button { margin-left: 10px; }
+.together-chat { border-top: 1px solid var(--line); margin-top: 12px; }
+.together-messages { height: clamp(160px, 25vh, 360px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; padding: 12px 4px; }
+.together-messages article { margin: 0 0 18px; }
+.together-messages article small { color: var(--muted); font-size: 11px; }
+.together-messages time { margin-left: 8px; opacity: .65; }
+.together-messages article p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; margin: 6px 0; }
+.together-empty { color: var(--muted); font-size: 12px; }
+.together-chat form { display: flex; gap: 12px; margin-top: 8px; }
+.together-chat input { flex: 1; }
+.together-chat button { padding: 10px; }
+.together-exit-dialog { color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 28px; width: min(420px, calc(100vw - 40px)); }
+.together-exit-dialog::backdrop { background: #0005; backdrop-filter: blur(6px); }
+.together-exit-dialog h3 { font-weight: 500; }
+.together-exit-dialog p { color: var(--muted); font-size: 13px; line-height: 1.8; }
+.together-exit-dialog button { padding: 12px; font-size: 13px; }
+.together-exit-dialog [data-leave] { color: var(--accent); }

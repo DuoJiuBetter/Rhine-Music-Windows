@@ -2,6 +2,7 @@ import { overviewLabelPlacement, visibleOverviewLabels, type OverviewColumn } fr
 import { SurfaceTransition } from "./ui-transitions";
 import { escapeHtml as esc } from './html';
 import type { MusicTrack } from './music-types';
+import { songActionButton, songActionIcons } from './music-song-actions';
 
 interface LabelSurface {
   anchor: HTMLDivElement;
@@ -31,6 +32,7 @@ export class MusicOverviewUI {
   private hoveredLane: number | null = null;
   private viewport = { width: 1280, height: 720 };
   private reduced = false;
+  private playback = { id: '', playing: false, loading: false };
 
   constructor(private surface: HTMLElement, private container: HTMLElement,
     private returnFocus: () => void,
@@ -96,11 +98,22 @@ export class MusicOverviewUI {
   canEnter(lane: number) {
     return this.active && this.expandedLane === lane && !!this.labels.get(lane)?.visible;
   }
+  setPlayback(id: string, playing: boolean, loading: boolean, force = false) {
+    if (!force && id === this.playback.id && playing === this.playback.playing && loading === this.playback.loading) return;
+    this.playback = { id, playing, loading };
+    this.container.querySelectorAll<HTMLButtonElement>('[data-action="overview-start-song"]').forEach(button => {
+      const active = button.dataset.trackId === id, kind = active && loading ? 'loading' : active && playing ? 'pause' : 'play';
+      const icon = button.querySelector<HTMLElement>('i');
+      if (icon && icon.dataset.songActionIcon !== kind) { icon.innerHTML = songActionIcons[kind]; icon.dataset.songActionIcon = kind; }
+      button.setAttribute('aria-pressed', String(active && playing));
+      button.setAttribute('aria-label', `${active && playing ? '暂停' : '播放'} ${button.dataset.trackTitle || '歌曲'}`);
+    });
+  }
   setPlaylistContent(lane: number, page: { name: string; total: number; offset: number; tracks: (MusicTrack | null | undefined)[]; loading?: boolean; error?: string }) {
     const item = this.labels.get(lane); if (!item?.playlist || !this.canEnter(lane)) return;
     let list = item.details.querySelector<HTMLDivElement>('.overview-playlist-tracks');
     if (!list) {
-      item.details.innerHTML = `<div class="overview-playlist-content"><div class="overview-playlist-tracks" role="group" tabindex="0" aria-label="${esc(page.name)}"><div class="overview-playlist-window"></div></div><p class="overview-list-error" role="status"></p></div>`;
+      item.details.innerHTML = `<div class="overview-playlist-content"><div class="overview-playlist-tools"><button type="button" data-action="manage-playlist" data-list-lane="${lane}">整理歌单</button></div><div class="overview-playlist-tracks" role="group" tabindex="0" aria-label="${esc(page.name)}"><div class="overview-playlist-window"></div></div><p class="overview-list-error" role="status"></p></div>`;
       list = item.details.querySelector<HTMLDivElement>('.overview-playlist-tracks')!;
       const scroll = list;
       list.addEventListener('scroll', () => {
@@ -113,13 +126,15 @@ export class MusicOverviewUI {
     const count = Math.min(page.tracks.length, Math.max(0, page.total - page.offset));
     const window = list.querySelector<HTMLDivElement>('.overview-playlist-window')!;
     window.style.height = `${page.total * 56}px`;
-    const focusedSong = window.contains(document.activeElement)
-      ? (document.activeElement as HTMLElement | null)?.dataset.songIndex : undefined;
+    const focused = window.contains(document.activeElement) ? document.activeElement as HTMLElement : undefined;
+    const focusedSong = focused?.dataset.songIndex, focusedAction = focused?.dataset.action;
     window.innerHTML = Array.from({ length: count }, (_, index) => {
       const song = page.tracks[index], position = page.offset + index;
-      return `<button type="button" style="top:${position * 56}px" data-action="overview-play-song" data-list-lane="${lane}" data-song-index="${position}" ${!song ? 'disabled' : ''}><span>${String(position + 1).padStart(2, '0')}</span><span><strong>${esc(song?.title || (page.loading ? '正在读取…' : '歌曲不可用'))}</strong><small>${esc(song?.artist || '')}</small></span></button>`;
+      const attrs = { 'data-list-lane': lane, 'data-song-index': position }, label = song?.title || (page.loading ? '正在读取…' : '歌曲不可用');
+      return `<div class="overview-song-row" style="top:${position * 56}px"><button type="button" class="overview-song-title" data-action="overview-play-song" data-list-lane="${lane}" data-song-index="${position}" ${!song ? 'disabled' : ''}><span>${String(position + 1).padStart(2, '0')}</span><span><strong>${esc(label)}</strong><small>${esc(song?.artist || '')}</small></span></button><div class="row-song-actions" role="group" aria-label="${esc(label)}的操作">${songActionButton('play', `播放 ${label}`, { ...attrs, 'data-action': 'overview-start-song', 'data-track-id': song?.id || '', 'data-track-title': label }, !song)}${songActionButton('next', `下一首播放 ${label}`, { ...attrs, 'data-action': 'overview-next-song' }, !song)}${songActionButton('add', `将 ${label} 添加到歌单`, { ...attrs, 'data-action': 'overview-add-song' }, !song || !song.onlineSource)}</div></div>`;
     }).join('') || (page.total === 0 ? '<p>这个歌单还没有歌曲。</p>' : '');
-    if (focusedSong !== undefined && /^\d+$/.test(focusedSong)) window.querySelector<HTMLButtonElement>(`[data-song-index="${focusedSong}"]`)?.focus({ preventScroll: true });
+    if (focusedSong !== undefined && /^\d+$/.test(focusedSong) && ['overview-play-song','overview-start-song','overview-next-song','overview-add-song'].includes(focusedAction || '')) window.querySelector<HTMLButtonElement>(`button[data-song-index="${focusedSong}"][data-action="${focusedAction}"]`)?.focus({ preventScroll: true });
+    this.setPlayback(this.playback.id, this.playback.playing, this.playback.loading, true);
     item.details.querySelector<HTMLElement>('.overview-list-error')!.textContent = page.error || '';
   }
 

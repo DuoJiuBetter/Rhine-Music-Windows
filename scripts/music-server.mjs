@@ -9,6 +9,9 @@ import { PlatformAuth } from './platform-auth.mjs'
 import { PlatformCatalog } from './platform-catalog.mjs'
 import { BodianCatalog } from './bodian-catalog.mjs'
 import { PlatformCoverStore } from './platform-media.mjs'
+import { OnlineAudioRelay } from './online-audio-relay.mjs'
+import { PlaylistManagement } from './playlist-management.mjs'
+import { NeteaseTogether } from './netease-together.mjs'
 import { diagnoseOnlineFailure, onlineDiagnostic, onlineRouteContext } from './online-diagnostics.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -93,6 +96,8 @@ export async function createMusicServer({
   online: providedOnline,
   platformAuth: providedPlatformAuth,
   catalogs: providedCatalogs,
+  together: providedTogether,
+  togetherEnabled = true,
 } = {}) {
   const store = providedStore ?? await new MusicLibraryStore({ dataDir, defaultRoots }).init()
   const decoder = new AudioDecoder({ dataDir: store.dataDir ?? dataDir })
@@ -101,6 +106,9 @@ export async function createMusicServer({
   const platformAuth = providedPlatformAuth ?? { qq: new PlatformAuth({ provider: 'qq', dataDir }), bodian: new PlatformAuth({ provider: 'bodian', dataDir }) }
   const catalogs = providedCatalogs ?? { qq: new PlatformCatalog({ provider: 'qq', auth: platformAuth.qq }), ...(platformAuth.bodian ? { bodian: new BodianCatalog({ auth: platformAuth.bodian }) } : {}) }
   const platformCovers = new PlatformCoverStore()
+  const audioRelay = new OnlineAudioRelay()
+  const playlistManagers = Object.fromEntries(Object.entries({ netease: online, ...catalogs }).map(([provider, catalog]) => [provider, new PlaylistManagement(provider, catalog)]))
+  const together = providedTogether ?? new NeteaseTogether(online)
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Referrer-Policy', 'same-origin')
@@ -112,7 +120,23 @@ export async function createMusicServer({
       const route = decodeURIComponent(url.pathname)
       if (route.includes('\0') || route.includes('\\')) return json(response, 400, { error: '无效路径' })
       const get = request.method === 'GET' || request.method === 'HEAD'
+      const relayedAudio = /^\/api\/online\/audio\/([a-f0-9]{48})$/.exec(route)
+      if (relayedAudio && get) return await audioRelay.serve(relayedAudio[1], request, response)
       if (route === '/api/health' && get) return json(response, 200, { service: 'rhine-local-music', projectDir: PROJECT_DIR, pid: process.pid })
+      if (route === '/api/online/netease/together') {
+        if (!togetherEnabled) return json(response, 501, { error: '此公开安装包未提供一起听：原生聊天组件的分发许可尚未核实。', code: 'FEATURE_NOT_INCLUDED' })
+        if (request.method === 'GET') return json(response, 200, await together.status())
+        if (request.method === 'POST') return json(response, 200, await together.action(await bodyJson(request)))
+        return json(response, 405, { error: '请求方法不支持' })
+      }
+      const playlistManage = /^\/api\/online\/(netease|qq|bodian)\/playlist-management$/.exec(route)
+      if (playlistManage) {
+        const manager = playlistManagers[playlistManage[1]]
+        if (!manager) return json(response, 503, { error: '当前平台未配置。' })
+        if (request.method === 'GET') return json(response, 200, await manager.capabilities())
+        if (request.method === 'POST') return json(response, 200, await manager.mutate(await bodyJson(request)))
+        return json(response, 405, { error: '请求方法不支持' })
+      }
       const platformLogin = /^\/api\/online\/(qq|bodian)\/auth\/(status|start|poll|cancel|logout)$/.exec(route)
       if (platformLogin) {
         const auth = platformAuth[platformLogin[1]], action = platformLogin[2]
@@ -128,7 +152,10 @@ export async function createMusicServer({
       if (platformRoute) {
         const provider = platformRoute[1], action = platformRoute[2], catalog = catalogs[provider]
         if (!catalog) return json(response, 503, { error: '当前平台未配置。' })
-        if (action.startsWith('prepare/') && request.method === 'POST') { await bodyJson(request); return json(response, 200, await catalog.prepare(platformRoute[5])) }
+        if (action.startsWith('prepare/') && request.method === 'POST') {
+          const body = await bodyJson(request), prepared = await catalog.prepare(platformRoute[5])
+          return json(response, 200, body.sameOrigin === true ? { ...prepared, audioUrl: audioRelay.register(provider, prepared.audioUrl) } : prepared)
+        }
         if (request.method !== 'GET') return json(response, 405, { error: '请求方法不支持' })
         if (action === 'search') return json(response, 200, await catalog.search(url.searchParams.get('q'), Number(url.searchParams.get('offset') || 0)))
         if (action === 'playlists') return json(response, 200, await catalog.playlists(Number(url.searchParams.get('offset') || 0)))
@@ -153,12 +180,13 @@ export async function createMusicServer({
       const authAction = /^\/api\/online\/netease\/auth\/(start|poll|cancel|logout)$/.exec(route)
       if (authAction && request.method === 'POST') {
         const body = await bodyJson(request)
+        if (['start', 'logout'].includes(authAction[1])) together.dispose()
         return json(response, 200, await online.auth[authAction[1]](body.id))
       }
       const onlinePrepare = /^\/api\/online\/netease\/prepare\/([1-9]\d{0,15})$/.exec(route)
       if (onlinePrepare && request.method === 'POST') {
-        await bodyJson(request)
-        return json(response, 200, await online.prepare(onlinePrepare[1]))
+        const body = await bodyJson(request), prepared = await online.prepare(onlinePrepare[1])
+        return json(response, 200, body.sameOrigin === true ? { ...prepared, audioUrl: audioRelay.register('netease', prepared.audioUrl) } : prepared)
       }
       if (route === '/api/audio/capabilities' && get) {
         await decoder.init()
@@ -264,7 +292,7 @@ export async function createMusicServer({
       else response.destroy()
     }
   })
-  server.once('close', () => { decoder.dispose(); output.dispose() })
+  server.once('close', () => { together.dispose(); audioRelay.dispose(); decoder.dispose(); output.dispose() })
   server.requestTimeout = 30_000
   if (autoScan) server.once('listening', () => { void store.scan().catch(() => {}) })
   return { server, store, decoder, output }

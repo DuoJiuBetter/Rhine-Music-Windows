@@ -52,9 +52,16 @@ export function introRowOffset(time: number) {
     const t = Math.max(0, Math.min(1, value));
     return t * t * t * (10 + t * (-15 + 6 * t));
   };
-  return time < 24.15
-    ? -9 + 27 * ease((time - 22.2) / 1.95)
-    : 18 * (1 - ease((time - 24.15) / 1.6));
+  // Same front positions/envelopes as archiveWave, in coordinates relative
+  // to its center row (12). The former independent eased sweep reached a
+  // different row from the actual crest, especially on the return pass.
+  const t = time - 22;
+  const forward = 1 - ease((t - 2.15) / 0.65);
+  const backward = ease((t - 2.17) / 0.32) * (1 - ease((t - 3.5) / 0.85));
+  const weight = forward + backward;
+  const crest = weight > 0
+    ? (forward * (-9 + t * 19) + backward * (20 - (t - 2.3) * 24)) / weight : 0;
+  return crest * (1 - ease((time - 24.95) / 0.45));
 }
 
 export const ROW_LIGHTING = {

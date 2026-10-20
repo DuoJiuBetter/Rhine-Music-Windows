@@ -1,20 +1,24 @@
 /** Frame statistics exclude loading time and hidden-tab pauses. CPU submission
  * time is deliberately not called GPU time: the GPU runs asynchronously. */
 export class MusicFrameTiming {
+  private readonly maxSamples: number;
   private previous: number | undefined;
   private gaps: number[] = [];
   private cpu: number[] = [];
+  constructor(maxSamples = 240) {
+    this.maxSamples = Number.isFinite(maxSamples) ? Math.min(1200, Math.max(16, Math.floor(maxSamples))) : 240;
+  }
   reset() { this.previous = undefined; this.gaps = []; this.cpu = []; }
   begin(now: number) {
     if (this.previous !== undefined) {
       this.gaps.push(Math.max(0, now - this.previous));
-      if (this.gaps.length > 240) this.gaps.shift();
+      if (this.gaps.length > this.maxSamples) this.gaps.shift();
     }
     this.previous = now;
   }
   end(elapsed: number) {
     this.cpu.push(Math.max(0, elapsed));
-    if (this.cpu.length > 240) this.cpu.shift();
+    if (this.cpu.length > this.maxSamples) this.cpu.shift();
   }
   snapshot() {
     const percentile = (values: number[], q: number) => {

@@ -22,8 +22,58 @@ export let records: ArchiveRecord[] = content.records;
 export let categories = ["全部档案", ...content.categories];
 export let archiveColumns = content.columns;
 export let musicLibrary = false;
+/** Display repetition only; independent from the audio playback mode. */
+export let modelLooping = true;
+export function setModelLooping(enabled: boolean) { modelLooping = enabled; }
 export let slotStride = 32;
 export let playlistRows: string[] = [];
+export let queueShelfLane = -1;
+export let queueShelfStart = -1;
+let baseColumns: string[] = [];
+let baseFiles: number[][] = [];
+let baseSlotStride = 32;
+export const shelfColumnPeriod = () => playlistRows.length ? playlistRows.length + Number(queueShelfLane >= 0) : archiveColumns.length;
+export function isQueueShelfLane(lane: number) {
+  return queueShelfLane >= 0 && lane === queueShelfLane;
+}
+export function isQueueShelfAlias(lane: number) {
+  if (queueShelfLane < 0) return false;
+  if (!modelLooping) return isQueueShelfLane(lane);
+  const origin = playlistRows.length ? 2 : 0, period = shelfColumnPeriod();
+  return ((lane - origin) % period + period) % period + origin === queueShelfLane;
+}
+export function queueShelfFile(lane: number, row: number) {
+  // The column period reserves every queue occurrence, so every occurrence
+  // must resolve to the same logical queue rather than leaving an empty lane.
+  if (!Number.isInteger(lane) || !isQueueShelfAlias(lane) || !Number.isInteger(row)) return -1;
+  const files = columnFiles(queueShelfLane);
+  if (!modelLooping) return files[row - 12] ?? -1;
+  return files.length ? files[((row - 12) % files.length + files.length) % files.length] : -1;
+}
+/** Append one logical queue; display repetitions share its existing entries. */
+export function setQueueShelfAlbums(queue: readonly MusicAlbum[]) {
+  if (queueShelfLane >= 0) {
+    records = records.slice(0, queueShelfStart);
+    archiveColumns = baseColumns;
+    filesByColumn = baseFiles;
+    slotStride = baseSlotStride;
+  }
+  queueShelfLane = queueShelfStart = -1;
+  if (!queue.length) return;
+  baseColumns = archiveColumns; baseFiles = filesByColumn; baseSlotStride = slotStride;
+  // Search shelves have spare empty columns; put the queue beside real content.
+  const lastUsed = filesByColumn.reduce((last, files, index) => files.length ? index : last, -1);
+  const columns = playlistRows.length ? archiveColumns.length : records.length ? lastUsed + 1 : 2;
+  archiveColumns = Array.from({ length: columns }, (_, index) => baseColumns[index] ?? '');
+  filesByColumn = Array.from({ length: columns }, (_, index) => baseFiles[index] ?? []);
+  queueShelfLane = archiveColumns.length; queueShelfStart = records.length;
+  archiveColumns = [...archiveColumns, '播放列表'];
+  filesByColumn = [...filesByColumn, queue.map((_, index) => queueShelfStart + index)];
+  records = [...records, ...queue.map(album => ({ id: album.id, title: album.title, en: album.artist,
+    department: album.artist, category: '播放列表', date: '', lead: album.artist, clearance: '播放列表',
+    abstract: album.folder, findings: album.rawGenres, source: album.online?.sourceUrl ?? '播放列表', album }))];
+  slotStride = Math.max(slotStride, queue.length + 24);
+}
 let playlistCells = new Map<string, number>();
 let playlistLengths: number[] = [];
 let filesByColumn = archiveColumns.map((name) => records.flatMap((record, index) => record.category === name ? [index] : []));
@@ -31,6 +81,7 @@ let filesByColumn = archiveColumns.map((name) => records.flatMap((record, index)
 /** Replace the view model atomically; audio files and their metadata stay intact. */
 export function setMusicAlbums(albums: MusicAlbum[], genres: MusicGenre[] = [], sortMode: MusicSortMode = "genre") {
   musicLibrary = true;
+  queueShelfLane = queueShelfStart = -1;
   playlistRows = []; playlistLengths = []; playlistCells.clear();
   const ordered = orderMusicAlbums(albums, sortMode);
   const usedGenres = new Set(ordered.map((album) => album.genreId));
@@ -93,17 +144,33 @@ export function setPlaylistAlbums(albums: MusicAlbum[], names: string[]) {
   filesByColumn = archiveColumns.map(() => []);
   records.forEach((record, index) => {
     const cell = record.album!.playlistCell!;
-    playlistLengths[cell.playlistIndex] = Math.max(1, cell.total);
+    playlistLengths[cell.playlistIndex] = Math.max(0, cell.total);
     const lane = cell.playlistIndex + 2, row = cell.songIndex + 12;
     playlistCells.set(`${lane}:${row}`, index); filesByColumn[lane].push(index);
   });
 }
 export function playlistFile(lane: number, row: number) {
   if (!playlistRows.length || !Number.isInteger(lane) || !Number.isInteger(row)) return -1;
-  const playlist = ((lane - 2) % playlistRows.length + playlistRows.length) % playlistRows.length;
+  if (isQueueShelfAlias(lane)) return queueShelfFile(lane, row);
+  if (!modelLooping) {
+    if (lane < 2 || lane >= playlistRows.length + 2 || row < 12 || row >= 12 + (playlistLengths[lane - 2] ?? 0)) return -1;
+    return playlistCells.get(`${lane}:${row}`) ?? -1;
+  }
+  const periodColumns = shelfColumnPeriod();
+  const playlist = ((lane - 2) % periodColumns + periodColumns) % periodColumns;
   const period = playlistLengths[playlist] || 1;
   const song = ((row - 12) % period + period) % period;
   return playlistCells.get(`${playlist + 2}:${song + 12}`) ?? -1;
+}
+/** A real playlist position still has its shell before its metadata page arrives. */
+export function playlistShellExists(lane: number, row: number) {
+  if (!playlistRows.length || !Number.isInteger(lane) || !Number.isInteger(row)) return false;
+  if (isQueueShelfAlias(lane)) return queueShelfFile(lane, row) >= 0;
+  if (!modelLooping) return lane >= 2 && lane < playlistRows.length + 2 &&
+    row >= 12 && row < 12 + (playlistLengths[lane - 2] ?? 0);
+  const columns = shelfColumnPeriod();
+  const playlist = ((lane - 2) % columns + columns) % columns;
+  return (playlistLengths[playlist] ?? 0) > 0;
 }
 
 export function columnFiles(lane: number) {

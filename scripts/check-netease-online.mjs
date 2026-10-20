@@ -143,6 +143,11 @@ test('owned server exposes NetEase search/prepare with the existing origin bound
   assert.equal((await fetch(`${origin}/api/online/netease/search?q=x`, { headers: { Origin: 'https://example.invalid' } })).status, 403);
   const prepared = await fetch(`${origin}/api/online/netease/prepare/123`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(prepared.status, 200); assert.equal((await prepared.json()).audioUrl, 'https://m7.music.126.net/x.mp3');
+  const sameOrigin = await (await fetch(`${origin}/api/online/netease/prepare/123`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({sameOrigin:true}) })).json();
+  assert.match(sameOrigin.audioUrl, /^\/api\/online\/audio\/[a-f0-9]{48}$/);
+  assert.equal(JSON.stringify(sameOrigin).includes('m7.music.126.net'),false);
+  assert.equal((await fetch(origin+sameOrigin.audioUrl,{headers:{Origin:'https://example.invalid'}})).status,403);
+  assert.equal((await fetch(`${origin}/api/online/audio/${'0'.repeat(48)}`)).status,410);
   assert.equal((await fetch(`${origin}/api/online/netease/search?q=x&offset=1`)).status, 400);
   assert.equal((await (await fetch(`${origin}/api/online/netease/auth/status`)).json()).loggedIn, false);
   assert.equal((await fetch(`${origin}/api/online/netease/playlists`)).status, 401);

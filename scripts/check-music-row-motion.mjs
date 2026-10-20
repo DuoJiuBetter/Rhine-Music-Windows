@@ -236,6 +236,14 @@ for (const axis of ['row', 'lane']) close(logicalLight(rebased)[axis], rebased.t
 // Inspect actual production shader anchors across the complete 5.2 second
 // opening, including the array's authored entry translation and final hold.
 const intro = setup();
+// Check against the array wave's actual front, not a second copy of the
+// lighting function. Before the returning packet, its phase is 3+19*(t-22).
+for (const time of [22.1, 22.5, 23, 23.8, 24.1])
+  close(introRowOffset(time), 3 + (time - 22) * 19 - 12,
+    'Opening ribbon and forward crest use the same shelf row');
+for (const time of [24.8, 24.9])
+  close(introRowOffset(time), 32 - (time - 24.3) * 24 - 12,
+    'Opening ribbon follows the returning crest rather than the old independent sweep');
 const introOffsets = [];
 for (let frame = 0; frame <= 624; frame++) {
   const time = 21.92 + frame / 120;

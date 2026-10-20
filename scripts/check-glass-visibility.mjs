@@ -137,8 +137,21 @@ test("optional analysis unsupported by driver retains optimized physical renderi
   f.pass.dispose();
 });
 
+test("ordinary optimized rendering never creates diagnostic area targets or schedules area readback", () => {
+  const f = fixture();
+  f.renderer.extensions.has = () => { throw Error('ordinary mode must not probe analysis support'); };
+  f.renderer.initRenderTarget = () => { throw Error('ordinary mode must not create diagnostic targets'); };
+  f.renderer.readRenderTargetPixelsAsync = () => { throw Error('ordinary mode must not sample diagnostic pixels'); };
+  for (let i = 0; i < 325; i++) f.pass.render(f.renderer, f.read, f.read, .016, false);
+  assert.equal(f.pass.getStats().depthFrames,325);
+  assert.equal(f.pass.getStats().analysisFrames,0);
+  assert.equal(f.pass.getStats().areaSampleIntervalFrames,null);
+  f.pass.dispose();
+});
+
 test("asynchronous area samples are bounded, detach depth and reject stale mode results", async () => {
   const f = fixture();
+  f.pass.setMode("debug");
   f.renderer.extensions.has = () => true;
   f.renderer.initRenderTarget = () => {};
   f.renderer.copyTextureToTexture = (source, destination) => {

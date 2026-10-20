@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { MusicFrameTiming } from '../src/music-frame-timing.ts';
 import './check-music-frame-timing.mjs';
+import { MusicStartup } from '../src/music-startup.ts';
 
 const { version: appVersion } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const source = await readFile(new URL('../src/music-app.ts', import.meta.url), 'utf8');
@@ -30,7 +31,7 @@ const listeners = tree.statements.filter(node => ts.isExpressionStatement(node) 
   ts.isStringLiteral(node.expression.arguments[0]) &&
   ['visibilitychange', 'pagehide', 'pageshow'].includes(node.expression.arguments[0].text))
   .map(node => node.getText(tree)).join('\n');
-assert.equal(listeners.match(/addEventListener/g)?.length, 3, 'All production lifecycle listeners are included');
+assert.equal(listeners.match(/addEventListener/g)?.length, 4, 'All production lifecycle listeners, including visualizer visibility, are included');
 const compiledCode = ts.transpileModule(`${declarations}\n${functions}\n${listeners}`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -45,7 +46,7 @@ function eventTarget() {
 }
 function fixture({ renderScene = true, firstMs = 0, reduced = false, speed = 1, ready = true } = {}) {
   const pending = new Map(), elements = new Map();
-  const calls = { scene: 0, boot: 0, viewer: 0, presentation: 0, library: 0, clearTimeout: [],
+  const calls = { scene: 0, boot: 0, viewer: 0, presentation: 0, library: 0, playlistRebuilds: 0, clearTimeout: [],
     decryption: [], dispose: { scene: 0, boot: 0, overview: 0, player: 0, effects: 0, trackFocus: 0 } };
   const document = { ...eventTarget(), hidden: false }, window = eventTarget();
   const scene = { update: () => calls.scene++, musicPresentationPhase: 'archive',
@@ -73,7 +74,14 @@ function fixture({ renderScene = true, firstMs = 0, reduced = false, speed = 1, 
     const overviewUI = { dispose: () => calls.dispose.overview++ };
     const showBrowseSurface = () => {}, documentDecryption = { update: time => calls.decryption.push(time) };
     const songView = { setVisible() {}, dispose() {} };
+    const visualizer = { setHidden() {}, dispose() {} }, titleMotion = {setRapid(){}}, tryEnterPlaylistOverview = () => {};
+    const together = {dispose(){}}, playlistManager = {dispose(){}}, onlineDebug = {dispose(){}}, lyricSettingsPreview = {dispose(){}};
+    let disposeKeybindingEditor, queueViewUI, loadingOpening;
+    const playlistSongBars = {destroy(){}}, keyboardPlayback = {cancel(){}}, playbackShortcuts = {dispose(){},cancel(){}}, startup = {cancel(){}};
+    const disposePlatformLogin = () => {}, displayVersion = appVersion;
     const pendingDetailFocus = false, pendingTrackReveal = undefined, panel = undefined;
+    let playlistRefreshDeferred = false;
+    const accountActive = true, accountView = true, rebuildPlaylistGrid = () => { calls.playlistRebuilds++; };
     const pollTimer = 17, toastTimer = 18, clearTimeout = id => calls.clearTimeout.push(id);
     const loadLibrary = () => { calls.library++; };
     const player = { dispose: () => calls.dispose.player++ };
@@ -84,7 +92,7 @@ function fixture({ renderScene = true, firstMs = 0, reduced = false, speed = 1, 
     const trackFocus = { cancel: () => calls.dispose.trackFocus++ };
     let ready = config.ready;
     ${compiledCode}
-    return { frame, suspendPage, resumePage, disposePage, setReady: value => { ready = value; },
+    return { frame, suspendPage, resumePage, disposePage, setReady: value => { ready = value; }, deferPlaylist: () => { playlistRefreshDeferred = true; },
       state: () => ({ lastFrame, frameCount, frameHandle, frameDisposed, frameSuspended,
         textMotionTime, textMotionLastFrame, timing: frameTiming.snapshot() }) };
   `)(document, window, scene, boot, viewer, presentation, $, requestAnimationFrame, cancelAnimationFrame,
@@ -194,6 +202,14 @@ assert.equal(loading.pending.size, 1);
 loading.next(50000);
 assert.equal(loading.calls.scene, 1);
 
+const openingAccount = fixture();
+openingAccount.deferPlaylist();openingAccount.next(16);
+assert.equal(openingAccount.calls.playlistRebuilds,0,'account updates do not reset a playing/revealing opening');
+openingAccount.boot.active=false;openingAccount.next(32);
+assert.equal(openingAccount.calls.playlistRebuilds,1,'the first interactive frame resumes the deferred playlist refresh');
+openingAccount.next(48);assert.equal(openingAccount.calls.playlistRebuilds,1,'the deferred refresh runs once');
+openingAccount.disposePage();
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
@@ -276,12 +292,16 @@ function startupFixture({ waitAt, native = false, hidden = false } = {}) {
     if (!elements.has(selector)) elements.set(selector, { dataset: {}, setAttribute() {}, remove() { calls.push('remove-loading'); } });
     return elements.get(selector);
   };
-  const compiled = new Function('wait', 'calls', 'pending', '$', 'native', 'hidden', `
-    const navigator = {}, document = { hidden, fonts: { load: async () => {} } };
+  const compiled = new Function('wait', 'calls', 'pending', '$', 'native', 'hidden', 'MusicStartup', `
+    const navigator = {}, document = { hidden, querySelectorAll: () => [], fonts: { load: async () => {} } };
+    const startup = new MusicStartup(), prepareStartupExtras = async () => {}, yieldStartupFrame = async () => {};
+    const detectAutomaticQuality = () => {}, savePrefs = () => {}, nativeHidden = false, panel = null;
+    const activeProvider = 'netease', platformLogins = {netease: {status: async () => {}}};
+    const prepareOpeningLibrary = async () => {}, accountActive = false, accountView = false;
     const preferences = { arrayMode: 'realistic', theme: 'day', reduced: false, audioBackend: native ? 'coreaudio' : 'browser' };
     const lightingLab = false, location = { search: '' }, selected = 7, sortLabel = { column: '歌手' }, renderQuality = 1;
     const stage = { dataset: {}, classList: { toggle() {}, add() {} } };
-    let frameDisposed = false, frameSuspended = false, frameHandle = 0, scene, ready = false;
+    let frameDisposed = false, frameSuspended = false, frameHandle = 0, scene, ready = false, loadingOpening;
     const loadLibrary = force => wait(force ? 'library' : 'resume-library'), refreshAudioOutputs = () => wait('audio');
     const fit = () => {}, updateSelection = () => {}, syncSelectionMotion = () => {}, resetFrameTiming = () => {};
     const performance = { now: () => 6000 }, boot = { start: () => calls.push('boot-start') };
@@ -299,7 +319,7 @@ function startupFixture({ waitAt, native = false, hidden = false } = {}) {
     }
     ${productionFunction('start')}
     return { start, dispose: () => { frameDisposed = true; }, state: () => ({ ready, frameHandle }) };
-  `)(wait, calls, pending, $, native, hidden);
+  `)(wait, calls, pending, $, native, hidden, MusicStartup);
   return { ...compiled, gate, reached, pending, calls };
 }
 for (const waitAt of ['library', 'model', 'prepare', 'audio']) {
@@ -316,7 +336,7 @@ for (const waitAt of ['library', 'model', 'prepare', 'audio']) {
 }
 const browserStartup = startupFixture();
 await browserStartup.start();
-assert.deepEqual(browserStartup.calls, ['library', 'construct-scene', 'model', 'configure-scene', 'prepare', 'remove-loading', 'show-archive', 'resume-library'],
+assert.deepEqual(browserStartup.calls, ['library', 'construct-scene', 'configure-scene', 'model', 'prepare', 'show-archive', 'remove-loading', 'resume-library'],
   'Browser playback prepares graphics, shows the archive directly, then resumes library polling without initializing native audio');
 assert.equal(browserStartup.pending.size, 1);
 const nativeStartup = startupFixture({ native: true });
@@ -343,22 +363,27 @@ function scanningStartupFixture() {
   };
   let timerId = 0;
   const schedule = (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; };
-  const compiled = new Function('warm', 'warming', 'timers', 'pending', 'calls', 'request', '$', 'schedule', `
-    const navigator = {}, document = { hidden: false, fonts: { load: async () => {} } };
+  const compiled = new Function('warm', 'warming', 'timers', 'pending', 'calls', 'request', '$', 'schedule', 'MusicStartup', `
+    const navigator = {}, document = { hidden: false, querySelectorAll: () => [], fonts: { load: async () => {} } };
+    const startup = new MusicStartup(), prepareStartupExtras = async () => {}, yieldStartupFrame = async () => {};
+    const detectAutomaticQuality = () => {}, savePrefs = () => {}, nativeHidden = false;
+    const activeProvider = 'netease', platformLogins = {netease: {status: async () => {}}};
     const preferences = { arrayMode: 'realistic', sortMode: 'genre', theme: 'day', reduced: false, audioBackend: 'browser' };
     const lightingLab = false, lightingDemo = false, location = { search: '' }, sortLabel = { column: '流派' }, renderQuality = 1;
     const stage = { dataset: {}, classList: { toggle() {}, add() {} } };
     const performance = { now: () => 6000 }, boot = { active: false, start() { this.active = true; } };
     const neteaseLogin = { status: async () => {} }, effects = { setScene() {} };
-    let frameDisposed = false, frameSuspended = false, frameHandle = 0, scene, ready = false;
+    let frameDisposed = false, frameSuspended = false, frameHandle = 0, scene, ready = false, loadingOpening;
     let library = { albums: [], genres: [], scan: { running: false } }, albums = [], genres = [], selected = 0;
     let libraryReceived = false, libraryStateVersion = 0, refreshing = false, apiAvailable = false, pollTimer;
-    let demo = false, overview = false, columnMemory, libraryRebuilding = false, libraryIntent, browseLibraryDuringPlayback = false;
+    let demo = false, overview = false, columnMemory, libraryRebuilding = false, libraryIntent, browseLibraryDuringPlayback = false, queueView = false, searchShelfActive = false;
     const accountActive = false, accountView = false;
+    const prepareOpeningLibrary = async () => {};
     const mode = 'archive', panel = undefined, records = [], archiveColumns = ['Genre'];
     const currentAlbum = () => albums[selected], orderMusicAlbums = items => [...items];
     const columnFiles = () => records.map((_, index) => index);
     const setMusicAlbums = items => { records.splice(0, records.length, ...items.map(album => ({ id: album.id, album }))); };
+    const projectQueueRow = () => {};
     const presentation = { phase: 'archive', openingOrDetail: false, reset() {} };
     const browseTransition = { show() {}, hide() {} }, detailTransition = { hide() {} };
     const updateStatus = () => { calls.visibleAlbumCount = albums.length; };
@@ -383,7 +408,7 @@ function scanningStartupFixture() {
     ${productionFunction('start')}
     return { start, loadLibrary, finishBoot: () => { boot.active = false; },
       state: () => ({ ready, dataCount: records.length, sceneCount: scene?.columnCount }) };
-  `)(warm, warming, timers, pending, calls, request, $, schedule);
+  `)(warm, warming, timers, pending, calls, request, $, schedule, MusicStartup);
   return { ...compiled, warm, warming, timers, pending, calls, finishScan() {
     backend = { ...backend, albums: [album('first'), album('second'), album('third')], scan: { running: false } };
   } };

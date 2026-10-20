@@ -10,6 +10,7 @@ import { damp } from '../src/motion.ts';
 import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation, playlistRows } from '../src/data.ts';
 import { selectionCell, sameCell, wrap, fileAtCell, nearestOccurrence, COLUMN_SPACING, ROW_SPACING } from '../src/archive-loop.ts';
 import { MusicRealColumns } from '../src/music-real-columns.ts';
+import { CoverWorkBudget } from '../src/cover-work-budget.ts';
 
 const rates = { column: 3.7, rail: 3.7, lane: 4, shoulder: 5 };
 const target = (lanes, rows) => ({ column: lanes * 5.2, rail: -rows * .62, lane: lanes, shoulder: rows });
@@ -216,6 +217,7 @@ function navigationFixture(mode = 'filled', reduced = false, speed = 1) {
   const location = fileLocation(0);
   const sceneHost = {
     loaded: true, looping: true, reduced, musicArrayMode: mode,
+    coverWork: new CoverWorkBudget(), noteUserInteraction() {},
     musicPresentation: new MusicPresentation(), musicArchiveMotion: new MusicArchiveMotion(), musicNavigationLift: false,
     musicRealColumns: new MusicRealColumns(), musicOverview: { value: 0 },
     selectedSlot: location.slot, selectedCell: { lane: location.lane, row: location.row },
@@ -242,7 +244,7 @@ function navigationFixture(mode = 'filled', reduced = false, speed = 1) {
     const ready = true, boot = { active: false };
     const preferences = { rememberColumnPosition: true, arrayMode };
     const columnMemory = new Map(archiveColumns.map((name, lane) => [name, records[columnFiles(lane)[0]].id]));
-    const updateSelection = () => {}, cancelTrackReveal = () => {}, syncAlbumNavigation = () => {};
+    const updateSelection = () => {}, cancelTrackReveal = () => {}, syncAlbumNavigation = () => {}, preloadNearbyCovers = () => {};
     const effects = { play() {} }, overviewUI = { collapse() {} };
     const presentation = new AlbumPresentation({
       archiveReady: () => scene.musicPresentation.phase === 'archive',

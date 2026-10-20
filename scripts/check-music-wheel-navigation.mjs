@@ -48,15 +48,19 @@ assert.deepEqual(
 );
 assert.equal(
   steps.consume(144, 80),
-  3,
-  "A fast gesture can advance several albums",
+  1,
+  "A large mouse notch advances exactly one album",
 );
-assert.equal(steps.consume(10000, 96), 3, "Oversized events are bounded");
+assert.equal(steps.consume(10000, 96), 1, "Even page-sized events advance one album");
 assert.equal(
   steps.consume(1, 112),
   0,
   "No backlog remains after an oversized event",
 );
+steps.reset();
+assert.deepEqual([120,120,120].map((delta,i)=>steps.consume(delta,i*120)),[1,1,1],
+  "Isolated Windows mouse notches do not inherit excess travel");
+assert.equal(steps.consume(-120,400),-1,"A reverse mouse notch moves back only one album");
 steps.reset();
 assert.equal(steps.consume(40, 0), 0);
 assert.equal(steps.consume(-40, 16), 0);

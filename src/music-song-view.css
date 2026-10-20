@@ -11,11 +11,30 @@
 #song-facts dt { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 #song-facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 #song-description { font-size: 13px; line-height: 1.9; white-space: pre-wrap; margin-top: 24px; }
-#song-lyrics { position: relative; height: clamp(180px, 32vh, 410px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 16px 3px; white-space: pre-wrap; }
-.lyric-line { display: block; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; white-space: pre-wrap; cursor: pointer; margin: 0 0 18px; font-size: 15px; line-height: 1.55; color: var(--muted); opacity: .55; transform-origin: left center; }
-.lyric-line.current { font-size: clamp(22px, 2vw, 32px); font-weight: 600; color: var(--ink); opacity: 1; }
+#song-lyrics { position: relative; box-sizing: border-box; height: clamp(180px, 38vh, 600px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; padding: 0 6px; white-space: pre-wrap; }
+#song-lyrics::before, #song-lyrics::after { content: ''; display: block; height: var(--lyric-edge-top, 16px); }
+#song-lyrics::after { height: var(--lyric-edge-bottom, 16px); }
+.music-app .lyric-line { display: block; width: calc(100% / 1.12); padding: 0; border: 0; background: transparent; text-align: left; white-space: pre-wrap; cursor: pointer; margin: 0 0 clamp(18px, 2vh, 28px); font-size: clamp(18px, 1.35vw, 28px); font-weight: 600; line-height: 1.65; color: var(--muted); opacity: .5; transform: scale(1); transform-origin: left center; transition: transform .42s cubic-bezier(.22, 1, .36, 1), opacity .32s ease, color .32s ease; }
+.lyric-line.current { color: var(--ink); opacity: 1; transform: scale(1.12); }
 .lyric-line small { display: block; margin-top: 5px; font-size: .65em; font-weight: 400; }
 #song-lyrics.lyrics-untimed { display: block; overflow-y: auto; line-height: 2; padding-top: 28px; }
+#song-lyrics.lyrics-untimed::before, #song-lyrics.lyrics-untimed::after { display: none; }
+/* Layout height stays independent of the detail entrance transform. */
+#album-detail-content:has(#song-view[data-lyrics-active="true"]) {
+  --lyric-panel-available: calc(100% - var(--detail-content-top) - var(--detail-content-bottom));
+  --lyric-panel-height: clamp(min(500px, var(--lyric-panel-available)), calc(var(--lyric-panel-available) * var(--lyric-area-scale, 1)), var(--lyric-panel-available));
+  height: var(--lyric-panel-height);
+  top: var(--detail-content-top);
+  bottom: auto; display: flex; flex-direction: column;
+  container: song-detail / size;
+}
+#album-detail-content:has(#song-view[data-lyrics-active="true"]) > :not(#song-view) { flex-shrink: 0; }
+#song-view[data-lyrics-active="true"] { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#song-view[data-lyrics-active="true"] .song-view-heading { flex-shrink: 0; }
+#song-lyric-view:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.lyric-window { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
+#song-view[data-lyrics-active="true"] #song-lyrics { flex: 1; min-height: 0; height: 0; }
+#song-view[data-lyrics-active="true"] .lyric-transport { flex-shrink: 0; }
 .playback-seek { --progress: 0%; appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
 .playback-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--progress), var(--line) var(--progress)); }
 .playback-seek::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 11px; height: 11px; margin-top: -4px; border-radius: 50%; background: var(--accent); opacity: 0; transform: scale(.65); transition: opacity .15s ease, transform .15s ease; }
@@ -51,11 +70,8 @@
 .song-step-buttons button:disabled { opacity: .35; cursor: default; }
 .lyric-transport { margin-top: 16px; }
 .lyric-line:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
-#song-lyrics { scrollbar-color: color-mix(in srgb, var(--ink) 25%, transparent) transparent; }
-#song-lyrics::-webkit-scrollbar { width: 4px; background: transparent; }
-#song-lyrics::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) 25%, transparent); border-radius: 4px; }
-#song-lyrics::-webkit-scrollbar-track { background: transparent; }
-#song-lyrics::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+#song-lyrics { scrollbar-width: none; }
+#song-lyrics::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* Match the archive document's mask sweep. Lyrics reveal on page entry only;
    offscreen lines appear directly on later scroll / playback changes. */
@@ -75,3 +91,61 @@
 .music-app.reduce-motion .song-step-buttons button svg { transition: none; }
 .music-app.reduce-motion .playback-seek::-webkit-slider-thumb { transition: none; }
 .music-app.reduce-motion .playback-seek::-moz-range-thumb { transition: none; }
+.music-app.reduce-motion .lyric-line { transition: none; }
+
+.lyric-order-row { display: flex; justify-content: flex-start; margin-bottom: 5px; }
+.lyric-playback-mode { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: 0 0 34px; width: 34px; height: 32px; padding: 5px; border: 0; background: transparent; color: var(--muted); cursor: pointer; transition: color .18s ease, opacity .18s ease; }
+.lyric-playback-mode:hover { color: var(--accent); }
+.lyric-playback-mode:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.lyric-playback-mode svg { display: block; flex: 0 0 22px; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.lyric-playback-mode .repeat-one-digit { stroke-width: 1.4; }
+.lyric-playback-mode:is([data-mode="repeat-one"], [data-mode="shuffle"]) { color: var(--accent); }
+.music-app.reduce-motion .lyric-playback-mode { transition: none; }
+
+.song-view-tabs { display: flex; gap: 26px; flex-shrink: 0; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.song-view-tabs button { position: relative; min-height: 40px; padding: 8px 0 12px; border: 0; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
+.song-view-tabs button[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+.song-view-tabs button[aria-selected="true"]::after { content: ''; position: absolute; height: 2px; inset: auto 0 -1px; background: var(--accent); }
+.song-view-tabs button:hover { color: var(--ink); }
+.song-view-tabs button:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+
+/* Use the panel's real remaining space, rather than width alone. Long titles
+   and user height preferences must not consume the entire lyric viewport. */
+#album-detail-content:has(#song-view[data-lyrics-active="true"]) > h1 {
+  font-size: clamp(22px, min(2.5vw, 5cqh), 36px);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+#album-detail-content:has(#song-view[data-lyrics-active="true"]) > .detail-artist {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@container song-detail (max-height: 640px) {
+  .detail-overline { margin-bottom: 8px; line-height: 1.5; max-height: 3em; overflow: hidden; }
+  #album-detail-content > h1 { margin-bottom: 6px; line-height: 1.2; }
+  .detail-artist { font-size: 13px; line-height: 1.4; margin-bottom: 8px; }
+  #song-view { margin-top: 12px; }
+  .song-view-tabs { gap: 18px; margin-bottom: 10px; }
+  .song-view-tabs button { min-height: 34px; padding: 6px 0 9px; }
+  .song-view-heading { gap: 8px; margin-bottom: 8px; }
+  #song-toggle-stop, .song-step-buttons button { min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
+  .lyric-transport { margin-top: 8px; }
+}
+@container song-detail (max-height: 460px) {
+  #album-detail-content:has(#song-view[data-lyrics-active="true"]) > h1 { -webkit-line-clamp: 1; }
+  .detail-overline { max-height: 1.5em; }
+  #song-view { margin-top: 8px; }
+  .song-view-tabs { margin-bottom: 8px; }
+  .song-view-tabs button { min-height: 30px; padding-top: 4px; padding-bottom: 7px; }
+  .song-view-heading { margin-bottom: 6px; }
+}
+@media (max-height: 760px) and (min-aspect-ratio: 1.05) {
+  .music-detail:has(#song-view[data-lyrics-active="true"]) {
+    --detail-content-top: clamp(108px, 18vh, 136px);
+    --detail-content-bottom: 28px;
+  }
+}
+.music-app[data-layout="portrait"] #album-detail-content:has(#song-view[data-lyrics-active="true"]) {
+  --detail-content-top: 38%;
+}
+.music-app[data-layout="portrait"] .music-detail:has(#song-view[data-lyrics-active="true"])::before { inset-block-start: 34%; }
+.music-app[data-layout="portrait"] .music-detail:has(#song-view[data-lyrics-active="true"]) .card-caption { top: calc(38% - 52px); }

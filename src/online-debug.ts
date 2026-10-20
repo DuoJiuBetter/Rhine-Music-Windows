@@ -8,7 +8,7 @@ export type Diagnostic = {
   chain?: ReturnType<typeof sanitizeOnlineChain>; transport?: ReturnType<typeof sanitizeOnlineTransport>;
 };
 const records: Diagnostic[] = [];
-const operations = new Set(['search', 'playback', 'qrKey', 'qrCreate', 'qrCheck', 'status', 'playlists', 'playlistDetail', 'playlistTracks', 'songDetail', 'songInfo', 'album', 'lyric', 'start', 'poll', 'cancel', 'logout', 'cover', 'request']);
+const operations = new Set(['search', 'playback', 'qrKey', 'qrCreate', 'qrCheck', 'status', 'accountProfile', 'playlists', 'playlistWrite', 'playlistCreate', 'playlistRename', 'playlistDelete', 'playlistAdd', 'playlistRemove', 'playlistDetail', 'playlistTracks', 'songDetail', 'songInfo', 'album', 'lyric', 'start', 'poll', 'cancel', 'logout', 'cover', 'request', 'together', 'togetherStatus', 'togetherCreate', 'togetherJoin', 'togetherEnd', 'togetherHeartbeat', 'togetherPlaylist', 'togetherQueue', 'togetherCommand']);
 const safeNumber = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && Math.abs(value) <= 999999 ? value : undefined;
 let refresh: (() => void) | undefined;
 

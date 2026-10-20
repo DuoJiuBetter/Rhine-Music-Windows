@@ -1,5 +1,8 @@
 /** JSON contract shared by the local music service and the visual interface. */
 export interface MusicTrack {
+  /** Frontend playback occurrence; never sent as a media/platform song identifier. */
+  queueEntry?: import('./playback-queue').QueueEntry;
+  queueOrigin?: import('./playback-queue').PlaybackOrigin;
   id: string;
   albumId: string;
   title: string;
@@ -64,7 +67,7 @@ export interface MusicProducer {
 export interface MusicAlbum {
   playlistCell?: { playlistId: string; playlistName: string; playlistIndex: number; songIndex: number; total: number };
   /** A playback display card; this identity never rewrites library metadata. */
-  playback?: { trackId: string; albumId: string; songTitle: string };
+  playback?: { trackId: string; albumId: string; songTitle: string; entryId?: string; queueShelf?: boolean };
   id: string;
   title: string;
   artist: string;
@@ -118,6 +121,7 @@ export interface NeteasePlaylist {
   trackCount: number;
   coverUrl?: string;
   owned: boolean;
+  specialType?: number;
 }
 
 export interface MusicGenre {

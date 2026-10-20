@@ -1,0 +1,21 @@
+.music-visualizer { display: block; box-sizing: border-box; width: 100%; height: 168px; margin: 4px 0 0; padding: 0; pointer-events: none; contain: strict; opacity: 1; }
+.music-visualizer[hidden] { display: none; }
+.music-app.has-bottom-visualizer .music-bottomline { visibility: hidden; }
+.music-visualizer-mini { height: 72px; }
+.music-visualizer-bottom { position: absolute; z-index: 5; left: 28px; bottom: 26px; width: calc(100% - 56px); height: 288px; margin: 0; }
+.music-app {
+  --wave-crest: rgba(175, 112, 36, .9);
+  --wave-top: rgba(230, 181, 100, .58);
+  --wave-middle: rgba(204, 154, 92, .28);
+  --wave-base: rgba(193, 151, 105, .06);
+}
+.music-app[data-theme="night"] {
+  --wave-crest: rgba(190, 227, 255, .95);
+  --wave-top: rgba(134, 193, 244, .56);
+  --wave-middle: rgba(96, 157, 216, .28);
+  --wave-base: rgba(79, 132, 193, .06);
+}
+/* Keep the baseline and controls in place; share the space above them. */
+.music-visualizer:not(.music-visualizer-bottom) { position: relative; z-index: 2; margin-top: -112px; }
+.music-visualizer.music-visualizer-mini { margin-top: -44px; }
+.lyric-transport > .music-visualizer { flex-shrink: 0; }

@@ -254,7 +254,9 @@ export class GlassVisibilityRenderPass extends RenderPass {
       this.scene.background = null;
       this.clear = false;
       this.measure("sceneWithShadowsAndTransmission", () => super.render(renderer, write, read, deltaTime, maskActive));
-      if (this.mode === "debug" || this.frames % 256 === 64) {
+      // Layer-area estimates are diagnostics, not inputs to the exact prepass.
+      // Avoid allocating/copying/readback resources during ordinary navigation.
+      if (this.mode === "debug") {
         try { this.measure("glassVisibilityAnalysis", () => this.analyze(renderer, read)); }
         catch {
           // Optional diagnostics must never interrupt playback/rendering.
@@ -377,7 +379,7 @@ export class GlassVisibilityRenderPass extends RenderPass {
       depthGeometry: "exact-front-cap-triangle-subset",
       analysisFrames: this.analysisFrames, lastAnalysisCpuMs: this.lastAnalysisCpuMs,
       areaEstimate: this.area, areaEstimateIsLayerSamples: true,
-      areaSampleIntervalFrames: 256,
+      areaSampleIntervalFrames: this.mode === "debug" ? 256 : null,
       analysisAvailable: this.analysisAvailable, analysisError: this.analysisError,
       pendingAreaRead: this.pendingRead, moving: this.moving,
       regionScope: "current pose; every moving sample is uncertain",

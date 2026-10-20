@@ -1,0 +1,317 @@
+/* Opening rules copied from RhineLabUI 12cc5e4, isolated from the music scene. */
+.rhine-loading { position: fixed; inset: 0; z-index: 9000; overflow: hidden; color: #080a08; background: #e4e2dc; font-family: MiSans, sans-serif; }
+.rhine-loading .opening-skip { position: absolute; right: 36px; top: 48px; border: 0; background: transparent; color: inherit; padding: 12px; cursor: pointer; }
+.rhine-loading .opening-skip:focus-visible { outline: 2px solid #c16c30; outline-offset: 2px; }
+#music-loading[hidden] { display: none !important; }
+body:has(.rhine-loading:not([hidden])) .desktop-chrome { color: #42473f; }
+.rhine-loading[hidden], .rhine-loading [hidden] { display: none !important; }
+.rhine-loading *, .rhine-loading *::before, .rhine-loading *::after { box-sizing: border-box; }
+.rhine-loading button { font: inherit; }
+.rhine-loading .opening-stage { position: absolute; left: 50%; top: 50%; transform-origin: center; }
+.rhine-loading .brand {
+  position: absolute;
+  left: 59px;
+  top: 114px;
+  z-index: 5;
+  line-height: 1;
+  user-select: none;
+  width: 270px;
+  white-space: nowrap;
+}
+.rhine-loading .brand h1 {
+  font-size: 44px;
+  letter-spacing: 2.324px;
+  line-height: 48px;
+  margin: 0;
+  font-weight: 750;
+}
+.rhine-loading .brand > div {
+  font-size: 19px;
+  line-height: 23px;
+  letter-spacing: 0.587px;
+  font-weight: 600;
+}
+.rhine-loading .brand p {
+  margin: 0;
+  font-size: 35px;
+  line-height: 40px;
+  letter-spacing: 0;
+  word-spacing: 0;
+  display: flex;
+  justify-content: space-between;
+}
+.rhine-loading .brand p b {
+  font-weight: 750;
+  letter-spacing: 3px;
+}
+.rhine-loading .brand-analysis {
+  position: relative;
+  display: block;
+  width: 189px;
+  height: 40px;
+}
+.rhine-loading .brand-analysis > span {
+  position: absolute;
+  top: 0;
+  letter-spacing: 0;
+  font-kerning: none;
+}
+.rhine-loading .powered {
+  position: absolute;
+  right: 59px;
+  bottom: 108px;
+  font-size: 18px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 24px;
+}
+.rhine-loading .powered b {
+  font-weight: 750;
+}
+.rhine-loading .powered i {
+  height: 6px;
+  width: 25px;
+  background: #090a08;
+  display: inline-block;
+  margin-left: 11px;
+}
+.rhine-loading .boot-background {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 51% 48%,
+    #e7e7e1 0%,
+    #e3e1dc 76%,
+    #e4dfdb 100%
+  );
+  transition: none;
+  pointer-events: none;
+}
+.rhine-loading .boot-background svg {
+  width: 100%;
+  height: 100%;
+  opacity: 0.15;
+  filter: blur(2px);
+}
+.rhine-loading .boot {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.rhine-loading .boot-logo {
+  position: absolute;
+  width: 296px;
+  height: 177px;
+  left: 518px;
+  top: 462px;
+  transition: none;
+  opacity: 0;
+}
+.rhine-loading .boot-logo svg {
+  width: 100%;
+  height: 100%;
+}
+.rhine-loading .auth-status {
+  position: absolute;
+  left: 931px;
+  top: 529px;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  opacity: 0;
+}
+.rhine-loading .auth-status > span:first-child {
+  font-size: 14px;
+}
+.rhine-loading .auth-status i {
+  width: 3px;
+  height: 22px;
+  background: #282b26;
+  animation: blink 0.8s steps(1) infinite;
+}
+.rhine-loading .access-text {
+  position: absolute;
+  top: 532px;
+  left: 800px;
+  width: 420px;
+  text-align: left;
+  font-size: 18px;
+  opacity: 0;
+}
+.rhine-loading .scan {
+  position: absolute;
+  left: 410px;
+  top: -10px;
+  width: 1100px;
+  height: 1100px;
+  opacity: 0;
+  transform: scale(0.82);
+  transition:
+    transform 1.6s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.6s;
+}
+.rhine-loading .scan svg {
+  width: 100%;
+  height: 100%;
+}
+.rhine-loading .scan > span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 25px;
+}
+.rhine-loading .welcome {
+  position: absolute;
+  top: 403px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 55px;
+  font-weight: 700;
+  line-height: 1.05;
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.7s,
+    transform 1s;
+}
+.rhine-loading .welcome strong {
+  display: inline-block;
+  background: #080a08;
+  color: #ece9e4;
+  padding: 4px 10px 6px;
+  font-size: 51px;
+  line-height: 1;
+}
+.rhine-loading .welcome-logo {
+  width: 203px;
+  height: 121px;
+  margin: 58px auto 0;
+}
+.rhine-loading .welcome-logo svg {
+  width: 100%;
+  height: 100%;
+}
+.rhine-loading .brand,
+.rhine-loading .powered {
+  transition: opacity 0.6s;
+}
+.rhine-loading .powered {
+  font-size: 19px;
+}
+.rhine-loading .boot-background svg {
+  opacity: 0.09;
+  filter: blur(3px);
+}
+.rhine-loading .auth-status i {
+  display: none;
+}
+.rhine-loading .boot-white {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+}
+.rhine-loading .scan {
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  transform: none;
+  transition: none;
+}
+.rhine-loading .scan > span {
+  font-size: 22px;
+  white-space: nowrap;
+  padding-left: 0;
+}
+.rhine-loading .welcome {
+  left: 720px;
+  top: 403px;
+  width: 480px;
+  height: 340px;
+  transform-origin: 50% 44%;
+  transition: none;
+}
+.rhine-loading .welcome-heading {
+  position: relative;
+  z-index: 1;
+  line-height: 65px;
+  font-size: 55px;
+  white-space: nowrap;
+}
+.rhine-loading .welcome-panel {
+  position: absolute;
+  top: -59px;
+  left: 5px;
+  width: 470px;
+  height: 392px;
+  background: #080a08;
+}
+.rhine-loading .welcome-company {
+  position: absolute;
+  top: 67px;
+  left: 35px;
+  width: 410px;
+  height: 60px;
+}
+.rhine-loading .welcome-company strong {
+  display: block;
+  position: absolute;
+  inset: 0;
+  padding: 5px 8px;
+  background: transparent;
+  color: #080a08;
+  font-size: 48px;
+  line-height: 50px;
+  white-space: nowrap;
+  letter-spacing: -0.5px;
+}
+.rhine-loading .welcome-company .welcome-highlight {
+  background: #080a08;
+  color: #eeede8;
+}
+.rhine-loading .welcome-database {
+  position: absolute;
+  top: 134px;
+  left: 0;
+  width: 100%;
+  font-size: 36px;
+  line-height: 43px;
+  white-space: nowrap;
+}
+.rhine-loading .welcome-logo {
+  position: absolute;
+  top: 187px;
+  left: 138.5px;
+  margin: 0;
+}
+/* The upstream opening layout centers its 1920 × 1080 artwork in a full backdrop. */
+.rhine-loading .boot { inset: auto; left: calc(50% - 960px); top: calc(50% - 540px); width: 1920px; height: 1080px; }
+.rhine-loading .boot-white { left: calc((1920px - var(--opening-width)) / 2); top: calc((1080px - var(--opening-height)) / 2); width: var(--opening-width); height: var(--opening-height); right: auto; bottom: auto; }
+.rhine-loading .scan { transform: scale(var(--scan-scale)); transform-origin: center; }
+.rhine-loading .opening-stage[data-portrait="true"] :is(.access-text, .auth-status) { font-size: 36px; }
+.rhine-loading .opening-stage[data-portrait="true"] .scan > span { font-size: 52px !important; letter-spacing: 1px !important; }
+.rhine-loading :is(.brand, .powered, .boot *) { transition: none; animation: none; }
+.rhine-loading .auth-status i { display: none; }
+/* Text metrics accommodate the new project name; all geometric tracks are unchanged. */
+.rhine-loading .brand { width: 370px; }
+.rhine-loading .brand h1 { font-size: 36px; }
+.rhine-loading .welcome-company { left: 0; width: 480px; }
+.rhine-loading .welcome-company strong { font-size: 44px; }
+.rhine-loading .opening-status { position: absolute; left: 32px; right: 32px; bottom: 18px; margin: 0; text-align: center; font-size: 12px; color: #55574e; overflow-wrap: anywhere; }
+.rhine-loading button { border: 0; border-radius: 0; font: inherit; color: inherit; background: transparent; cursor: pointer; }
+.rhine-loading button:focus-visible { outline: 2px solid currentColor; outline-offset: 6px; }
+.rhine-loading .opening-retry { position: absolute; top: calc(50% + 90px); left: 50%; transform: translateX(-50%); padding: 12px 24px; border: 1px solid currentColor; }
+.rhine-loading .opening-hold { display: none; position: absolute; left: 0; right: 0; top: calc(50% - 32px); text-align: center; }
+.rhine-loading .opening-hold strong { display: block; font-size: clamp(24px, 4vw, 44px); letter-spacing: 3px; }
+.rhine-loading .opening-hold span { display: block; margin-top: 10px; font-size: 14px; letter-spacing: 4px; }
+.rhine-loading[data-state="waiting"] .opening-stage, .rhine-loading[data-state="error"] .opening-stage { visibility: hidden; }
+.rhine-loading[data-state="waiting"] .opening-hold, .rhine-loading[data-state="error"] .opening-hold { display: block; }
+.rhine-loading[data-state="error"] .opening-status { bottom: auto; top: calc(50% + 38px); }

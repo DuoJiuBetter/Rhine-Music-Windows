@@ -1,9 +1,10 @@
-import { musicWheelDelta, MusicWheelSteps } from './music-wheel-navigation';
+import { musicWheelDelta, MusicWheelSteps, MusicWheelDispatch } from './music-wheel-navigation';
 
 type SongBarsOptions = {
   enabled: () => boolean;
-  select: (song: number) => void;
+  select: (song: number, keyboard?: boolean) => void;
   step: (direction: number) => void;
+  playbackShortcutsActive?: () => boolean;
   title: (playlistId: string, song: number) => Promise<string>;
   cachedTitle?: (playlistId: string, song: number) => string | undefined;
   prefetch?: (playlistId: string, first: number, last: number) => void;
@@ -14,6 +15,8 @@ const OVERSCAN = 4;
 /** Every song has a distinct position; only the visible bars own DOM nodes. */
 export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOptions) {
   const events = new AbortController(), wheel = new MusicWheelSteps();
+  const dispatch = new MusicWheelDispatch(direction => { if (options.enabled()) options.step(direction); });
+  const resetWheel = () => { wheel.reset(); dispatch.reset(); };
   const viewport = document.createElement('div');
   viewport.className = 'playlist-song-bars-viewport'; viewport.tabIndex = -1;
   const track = document.createElement('div');
@@ -25,7 +28,7 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
   let pool: HTMLButtonElement[] = [], bars = new Map<number, HTMLButtonElement>(), labelEpoch = 0;
   let titleTimer: ReturnType<typeof setTimeout> | undefined;
   let pointer: { x: number; y: number } | undefined;
-  const labelSong = () => hovered >= 0 ? hovered : focused >= 0 ? focused : selected;
+  const labelSong = () => hovered >= 0 ? hovered : focused;
   function placeLabel(song: number) {
     const x = (song + .5) * step - viewport.scrollLeft;
     label.hidden = host.hidden || song < 0 || song >= total || x < 0 || x > viewport.clientWidth;
@@ -53,7 +56,7 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
         if (epoch !== labelEpoch || id !== playlistId || host.hidden) return;
         label.textContent = `第 ${song + 1} 首 · 歌名暂时不可用`; placeLabel(song);
       });
-    }, hovered >= 0 ? 120 : 0);
+    }, 0);
   }
   function renderBars() {
     const start = Math.max(0, Math.min(Math.max(0, total - pool.length), Math.floor(viewport.scrollLeft / step) - OVERSCAN));
@@ -75,7 +78,7 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
     }
     bars = next;
     if (playlistId && pool.length) options.prefetch?.(playlistId, start, start + pool.length - 1);
-    if (lostFocus) { focused = -1; (bars.get(selected) || viewport).focus({ preventScroll: true }); }
+    if (lostFocus) focused = -1;
   }
   function centerOn(song: number) {
     if (host.hidden || song < 0) return;
@@ -106,21 +109,23 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
     event.stopPropagation(); options.select(song);
   }, { signal: events.signal });
   host.addEventListener('wheel', event => {
-    if (!options.enabled() || total < 2) { wheel.reset(); return; }
-    const delta = musicWheelDelta(event, viewport.clientHeight); if (!delta) { wheel.reset(); return; }
+    if (!options.enabled() || total < 2) { resetWheel(); return; }
+    const delta = musicWheelDelta(event, viewport.clientHeight); if (!delta) { resetWheel(); return; }
     event.preventDefault(); event.stopPropagation(); hovered = focused = -1;
-    const direction = wheel.consume(delta, performance.now()); if (direction) options.step(direction);
+    const direction = wheel.consume(delta, performance.now()); if (direction) dispatch.push(direction);
   }, { passive: false, signal: events.signal });
-  host.addEventListener('pointerdown', () => wheel.reset(), { signal: events.signal });
+  host.addEventListener('pointerdown', () => resetWheel(), { signal: events.signal });
   viewport.addEventListener('keydown', event => {
     if (!options.enabled()) return;
     const song = songAt(event.target); if (song < 0) return;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') return;
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && options.playbackShortcutsActive?.()) return;
     const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1
       : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : 0;
     if (!direction && event.key !== 'Home' && event.key !== 'End') return;
-    event.preventDefault(); event.stopPropagation(); wheel.reset();
+    event.preventDefault(); event.stopPropagation(); resetWheel();
     const next = direction ? (song + direction + total) % total : event.key === 'Home' ? 0 : total - 1;
-    options.select(next); centerOn(next); bars.get(next)?.focus({ preventScroll: true });
+    options.select(next, true); centerOn(next); bars.get(next)?.focus({ preventScroll: true });
   }, { signal: events.signal });
   const onResize = () => {
     step = Number.parseFloat(getComputedStyle(host).getPropertyValue('--song-bar-step')) || 11;
@@ -129,7 +134,7 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
   // Recenter after the hidden browse surface becomes visible, too.
   const resize = new ResizeObserver(onResize); resize.observe(viewport);
   window.addEventListener('resize', onResize, { signal: events.signal });
-  window.addEventListener('blur', () => wheel.reset(), { signal: events.signal });
+  window.addEventListener('blur', () => resetWheel(), { signal: events.signal });
   viewport.addEventListener('scroll', () => { renderBars(); refreshHover(); }, { signal: events.signal });
   return {
     update(id: string, count: number, song: number, reduced: boolean) {
@@ -137,7 +142,7 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
       const nextTotal = id && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
       const changed = id !== playlistId || nextTotal !== total;
       if (changed) {
-        playlistId = id; total = nextTotal; hovered = focused = -1; pointer = undefined; wheel.reset();
+        playlistId = id; total = nextTotal; hovered = focused = -1; pointer = undefined; resetWheel();
         const size = Math.min(BAR_POOL_SIZE, total);
         while (pool.length > size) pool.pop()!.remove();
         while (pool.length < size) {
@@ -158,6 +163,6 @@ export function setupPlaylistSongBars(host: HTMLElement, options: SongBarsOption
         if (cached && label.textContent !== cached) showTitle();
       }
     },
-    destroy() { clearTimeout(titleTimer); labelEpoch++; resize.disconnect(); events.abort(); wheel.reset(); },
+    destroy() { clearTimeout(titleTimer); labelEpoch++; resize.disconnect(); events.abort(); resetWheel(); },
   };
 }

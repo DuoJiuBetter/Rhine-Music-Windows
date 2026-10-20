@@ -61,7 +61,7 @@ export class BodianProtocol {
       });
     } finally { this.active--; }
   }
-  async api(path, values = {}, { credential, signal, payload, method = 'GET', timed = false } = {}) {
+  async api(path, values = {}, { credential, signal, payload, method = 'GET', timed = false, allowEmpty = false } = {}) {
     if (!/^\/api\/(?:ucenter|service|search|play)\/[A-Za-z0-9/_]+$/.test(path)) throw fail('无效的波点接口路径。', 400);
     const params = new URLSearchParams({ ...values, uid: credential?.uid || '-1', token: credential?.token || '', ...(timed ? { timestamp: String(Date.now()) } : {}) });
     const body = payload ? JSON.stringify(payload) : '';
@@ -70,6 +70,7 @@ export class BodianProtocol {
       params.set('sign', md5(seed));
     }
     const result = await this.json(`https://bd-api.kuwo.cn${path}?${params}`, { method, body, signal, deviceId: credential?.deviceId, credential });
+    if (allowEmpty && method === 'POST' && Number(result?.code) === 200 && result.data == null) return {};
     return this.data(result);
   }
   data(result) {

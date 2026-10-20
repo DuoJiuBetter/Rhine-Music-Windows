@@ -1,4 +1,6 @@
 import type { MusicTrack } from "./music-types";
+import { queueEntryKey } from './playback-queue.ts';
+import { configureSpectrumAnalyser } from './music-flowing-wave.ts';
 
 // This budget includes resident Float32 samples, the next encoded WAV and a
 // second encoded-size decode workspace reservation. It is not a browser heap cap.
@@ -45,12 +47,14 @@ export interface GaplessCallbacks {
 export class BrowserGaplessPlayer {
   private readonly context: AudioContext;
   private readonly gain: GainNode;
+  private analyser?: AnalyserNode;
   private current?: Slot;
   private next?: Slot;
   private nextAbort?: AbortController;
   private nextGeneration = 0;
   private generation = 0;
   private playing = false;
+  private playbackRate = 1;
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
   private decodeTail: Promise<unknown> = Promise.resolve();
@@ -66,12 +70,30 @@ export class BrowserGaplessPlayer {
 
   /** Call synchronously from the user play gesture, before any fetch or BGM wait. */
   unlock(): Promise<void> { return this.context.resume(); }
+  get spectrumSampleRate(): number { return this.context.sampleRate; }
   volume(value: number): void { this.gain.gain.value = Math.max(0, Math.min(1, value)); }
+  setSpectrumEnabled(enabled: boolean, responsive = false) {
+    if (this.analyser) configureSpectrumAnalyser(this.analyser, responsive);
+    if (!enabled) {
+      if (this.analyser) { this.gain.disconnect(this.analyser); this.analyser.disconnect(); this.analyser = undefined; }
+    } else if (!this.analyser) {
+      try {
+        const analyser = this.context.createAnalyser();
+        configureSpectrumAnalyser(analyser, responsive);
+        this.gain.connect(analyser); this.analyser = analyser;
+      } catch { /* Keep gapless playback if analysis is unavailable. */ }
+    }
+  }
+  readSpectrum(target: Uint8Array<ArrayBuffer>): boolean {
+    target.fill(0);
+    if (!this.analyser || !this.playing || this.context.state !== 'running') return false;
+    this.analyser.getByteFrequencyData(target); return true;
+  }
   get trackId(): string | undefined { this.sync(); return this.current?.track.id; }
   get position(): number {
     this.sync();
     const slot = this.current;
-    return slot ? Math.min(slot.buffer.duration, slot.offset + (this.playing ? Math.max(0, this.context.currentTime - slot.start) : 0)) : 0;
+    return slot ? Math.min(slot.buffer.duration, slot.offset + (this.playing ? Math.max(0, this.context.currentTime - slot.start) * this.playbackRate : 0)) : 0;
   }
   get duration(): number { return this.current?.buffer.duration ?? 0; }
   get residentBytes(): number { return bytesOf(this.current?.buffer) + bytesOf(this.next?.buffer); }
@@ -91,7 +113,7 @@ export class BrowserGaplessPlayer {
 
   async prepareNext(track?: MusicTrack): Promise<void> {
     this.sync();
-    if (track && this.next?.track.id === track.id) return;
+    if (track && queueEntryKey(this.next?.track) === queueEntryKey(track)) return;
     this.cancelNext();
     if (!track || !this.current || !this.playing) return;
     const owner = this.current;
@@ -99,7 +121,7 @@ export class BrowserGaplessPlayer {
     const controller = new AbortController(); this.nextAbort = controller;
     const buffer = await this.load(track, controller.signal);
     if (this.disposed || controller.signal.aborted || token !== this.nextGeneration || owner !== this.current || !this.playing) throw cancelled();
-    const boundary = owner.start + owner.buffer.duration - owner.offset;
+    const boundary = owner.start + (owner.buffer.duration - owner.offset) / this.playbackRate;
     if (boundary - this.context.currentTime < 0.025) throw new Error("下一首未能及时完成预备，本次队列改用普通播放。");
     this.next = { track, buffer, offset: 0, start: boundary };
     this.start(this.next);
@@ -125,6 +147,18 @@ export class BrowserGaplessPlayer {
     this.callbacks.progress(this.current.track, this.current.offset, this.current.buffer.duration);
   }
 
+  setPlaybackRate(rate: number): void {
+    if (this.disposed || !Number.isFinite(rate) || rate <= 0 || rate === this.playbackRate) return;
+    const position = this.position, wasPlaying = this.playing;
+    // Cancel against the old clock before changing rate, then reschedule both sources.
+    this.clearSources(); this.playbackRate = rate;
+    if (!this.current) return;
+    this.current.offset = position; this.current.start = this.context.currentTime;
+    this.playing = wasPlaying;
+    if (wasPlaying) { this.start(this.current); this.poll(); }
+    this.callbacks.progress(this.current.track, position, this.current.buffer.duration);
+  }
+
   cancelNext(): void {
     ++this.nextGeneration;
     this.nextAbort?.abort(); this.nextAbort = undefined;
@@ -134,13 +168,14 @@ export class BrowserGaplessPlayer {
   stop(): void { ++this.generation; this.clearSources(); this.current = undefined; }
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true; this.stop(); this.gain.disconnect();
+    this.disposed = true; this.stop(); this.setSpectrumEnabled(false); this.gain.disconnect();
     this.context.removeEventListener?.("statechange", this.onStateChange);
     void this.context.close().catch(() => {});
   }
 
   private start(slot: Slot): void {
     const source = this.context.createBufferSource();
+    source.playbackRate.value = this.playbackRate;
     source.buffer = slot.buffer; source.connect(this.gain); slot.source = source;
     // Do not use an onended callback to start another source: it is already
     // scheduled. A delayed main thread can only delay UI state, never this seam.
@@ -157,7 +192,7 @@ export class BrowserGaplessPlayer {
       this.nextAbort = undefined;
       this.callbacks.boundary(this.current.track, this.current.buffer.duration);
     }
-    if (this.current && now >= this.current.start + this.current.buffer.duration - this.current.offset) {
+    if (this.current && now >= this.current.start + (this.current.buffer.duration - this.current.offset) / this.playbackRate) {
       this.playing = false; this.current.offset = this.current.buffer.duration;
       this.release(this.current); this.callbacks.ended();
     }

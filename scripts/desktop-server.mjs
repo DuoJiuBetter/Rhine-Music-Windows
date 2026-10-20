@@ -9,7 +9,8 @@ for (const [name, variable] of [['ffmpeg', 'FFMPEG_PATH'], ['ffprobe', 'FFPROBE_
   if (!process.env[variable] && existsSync(bundled)) process.env[variable] = bundled;
 }
 // The desktop controls the service lifetime. Never reuse a foreign process.
-const { server, decoder, output } = await createMusicServer({ distDir: path.join(root, 'dist') });
+const { server, decoder, output } = await createMusicServer({ distDir: path.join(root, 'dist'),
+  togetherEnabled: !existsSync(path.join(root, 'PUBLIC-PACKAGE.json')) });
 let stopping = false;
 function stop() {
   if (stopping) return;

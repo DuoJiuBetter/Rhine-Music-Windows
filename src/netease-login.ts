@@ -57,10 +57,10 @@ export class NeteaseLogin {
     if (id) void this.request('cancel', { id }).catch(() => {});
   }
   dispose() { this.cancel(); document.removeEventListener('visibilitychange', this.visibility); window.removeEventListener('rhine-desktop-visibility', this.nativeVisibility); this.container = undefined; }
-  async status() {
+  async status(signal?: AbortSignal) {
     if (this.pending || this.challenge) return;
     const generation = this.generation; const controller = this.controller = new AbortController();
-    try { const account = await this.request('status', undefined, controller.signal); if (generation !== this.generation || controller.signal.aborted) return; this.account = account; this.onAccountChange(account); this.message = ''; this.render(); }
+    try { const account = await this.request('status', undefined, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal); if (generation !== this.generation || controller.signal.aborted || signal?.aborted) return; this.account = account; this.onAccountChange(account); this.message = ''; this.render(); }
     catch (failure) { if (generation === this.generation && !controller.signal.aborted) { this.message = (failure as Error).message; this.render(); } }
   }
   private async start() {

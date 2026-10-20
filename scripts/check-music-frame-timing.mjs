@@ -63,3 +63,12 @@ bounded.begin(90);
 bounded.end(-2);
 assert.deepEqual(bounded.snapshot(), { ...empty, samples: 1 }, 'Clock corrections and negative elapsed inputs do not create negative metrics');
 console.log('Music frame timing: cold start, 600-frame steady window, percentiles, eviction, reset and nonnegative input checks passed.');
+
+const capture = new MusicFrameTiming(1200);
+capture.begin(0);capture.begin(200);
+for(let i=1;i<=600;i++)capture.begin(200+i*1000/60);
+assert.equal(capture.snapshot().samples,601);
+assert.equal(capture.snapshot().frameMax,200,'Whole short captures retain early cold-upload hitches instead of dropping them after 240 frames');
+const capped = new MusicFrameTiming(100000);
+for(let i=0;i<1400;i++)capped.begin(i*16);
+assert.equal(capped.snapshot().samples,1200,'Even diagnostic windows have a fixed upper bound');

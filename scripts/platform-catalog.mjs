@@ -60,12 +60,13 @@ export class PlatformCatalog {
     return this.run(async () => { this.check(epoch); const value = await this.transport.qqHttp(path, params, credential); this.check(epoch); return value; });
   }
   async memo(key, task) {
-    await this.auth.ready; const epoch = this.scope(), qualified = `${epoch}:${key}`;
+    await this.auth.ready; const epoch = this.scope(), qualified = `${epoch}:${this.playlistWriteRevision || 0}:${key}`;
     const cached = this.cache.get(qualified);
     if (cached && this.now() - cached.at < (cached.value.lyrics?.error || cached.value.metadataError ? 30000 : 300000)) return cached.value;
     if (this.pending.has(qualified)) return this.pending.get(qualified);
     if (this.pending.size >= 16) throw failure('平台请求繁忙，请稍后重试。', 429);
-    const operation = (async () => { const value = await task(); this.check(epoch); this.cache.set(qualified, { at: this.now(), value }); while (this.cache.size > 128) this.cache.delete(this.cache.keys().next().value); return value; })().finally(() => this.pending.delete(qualified));
+    const revision = this.playlistWriteRevision || 0;
+    const operation = (async () => { const value = await task(); this.check(epoch); if (revision === (this.playlistWriteRevision || 0)) this.cache.set(qualified, { at: this.now(), value }); while (this.cache.size > 128) this.cache.delete(this.cache.keys().next().value); return value; })().finally(() => this.pending.delete(qualified));
     this.pending.set(qualified, operation); return operation;
   }
   remember(items, preserve = false) {

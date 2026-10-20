@@ -26,7 +26,7 @@ function deferred() {
 }
 const microtasks = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
-function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loaded = true } = {}) {
+function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loaded = true, uploadCostMs = 0, offscreen = false } = {}) {
   const calls = [], frames = [], disposals = new Map();
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(), model = new THREE.Group();
   model.visible = false;
@@ -60,9 +60,12 @@ function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loade
       return { settled: dirty === 0 };
     },
     getStats: () => ({ dirtyTiles: dirty }),
-    flushUploads(renderer, maximum) {
+    flushUploads(renderer, maximum, budget) {
       assert.equal(renderer, instance.renderer);
-      const count = Math.min(maximum, dirty);
+      assert.equal(budget.maxTransfers, 1);
+      assert.equal(budget.timeBudgetMs, 2);
+      const count = offscreen ? 0 : Math.min(maximum, dirty);
+      now += uploadCostMs;
       dirty -= count;
       calls.push(["upload", maximum, count]);
       return count;
@@ -70,8 +73,10 @@ function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loade
     dispose() { calls.push("covers.dispose"); },
   };
   const instance = {
-    disposed: false, loaded, model, scene, camera, covers: coverState,
+    async prepareIntroCovers() { calls.push('intro-covers'); },
+    disposed: false, loaded, model, scene, camera, covers: coverState, coverPriority: Array.from({length: 432}, (_, i) => i),
     container: { dataset: {} }, labelTexture: label, outgoing: [{ group: model }],
+    returningPool: { invalidate: () => calls.push("returningPool.dispose") },
     light: { shadow: { dispose: () => calls.push("shadow.dispose") } },
     renderer: {
       async compileAsync(actualScene, actualCamera) {
@@ -92,17 +97,18 @@ function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loade
       dispose: () => calls.push("composer.dispose"),
     },
     update(time, pose, render = true) {
-      assert.deepEqual(pose, { reveal: 1, lift: 0, zoom: 0, time: 27.12, musicIntro: true });
+      assert.equal(pose.musicIntro, true);
+      assert.ok([21.92, 27.12].includes(pose.time));
       assert.ok(Number.isFinite(time));
-      calls.push(["pose", render]);
+      calls.push(["pose", render, pose.time]);
       // Main-scene update/render behavior is intentionally a mock boundary.
       // The tested production method must request exactly two real draws.
       if (render) this.composer.render();
     },
     setMode: mode => calls.push(["mode", mode]),
   };
-  Object.assign(instance, new Function("THREE", "musicLibrary", "performance", "requestAnimationFrame", compiled)(
-    THREE, music, { now: () => now }, callback => { frames.push(callback); return frames.length; },
+  Object.assign(instance, new Function("THREE", "musicLibrary", "performance", "yieldStartupFrame", compiled)(
+    THREE, music, { now: () => now }, () => new Promise(resolve => frames.push(resolve)),
   ));
   return {
     instance, calls, frames, disposals,
@@ -110,7 +116,7 @@ function fixture({ dirtyTiles = 432, compileGate, coverGate, music = true, loade
     async finish(promise) {
       let done = false, failed;
       promise.then(() => { done = true; }, error => { failed = error; done = true; });
-      for (let index = 0; index < 40 && !done; index++) {
+      for (let index = 0; index < 140 && !done; index++) {
         await microtasks();
         if (!done && frames.length) this.nextFrame();
       }
@@ -125,12 +131,14 @@ const cold = fixture();
 const coldPreparation = cold.instance.prepareMusicRenderer();
 await cold.finish(coldPreparation);
 const coldUploads = cold.calls.filter(call => Array.isArray(call) && call[0] === "upload");
-assert.equal(coldUploads.length, 7);
+assert.deepEqual(cold.calls.filter(call=>call[0]==='pose'&&call[1]).map(call=>call[2]),[27.12,21.92],
+  'Exactly two draws warm the settled and opening cameras, ending at the first wave frame');
+assert.equal(coldUploads.length, 108);
 assert.equal(coldUploads.reduce((sum, call) => sum + call[2], 0), 432);
-assert.ok(coldUploads.every(call => call[1] === 64 && call[2] <= 64));
+assert.ok(coldUploads.every(call => call[1] === 4 && call[2] <= 4));
 assert.equal(cold.calls.filter(call => call === "draw").length, 2);
 assert.ok(cold.calls.indexOf("compile") < cold.calls.indexOf("draw"), "Compilation precedes every real draw");
-assert.deepEqual(cold.calls[0], ["pose", false], "The first pose setup performs no render");
+assert.deepEqual(cold.calls[0], ["pose", false, 27.12], "The first pose setup performs no render");
 assert.deepEqual(cold.calls.filter(call => Array.isArray(call) && call[0] === "prepareVisible"), [["prepareVisible", 1200]]);
 assert.equal(cold.instance.model.visible, false, "Compilation restores the model's original visibility");
 assert.deepEqual(cold.calls.at(-1), ["mode", "hidden"], "Prewarm returns the scene to its hidden opening pose");
@@ -139,13 +147,24 @@ assert.equal(diagnostics.glError, 0);
 assert.equal(diagnostics.parallelCompile, true);
 assert.equal(diagnostics.covers.dirtyTiles, 0);
 assert.ok(diagnostics.milliseconds > 0);
+assert.ok(!cold.calls.includes('intro-covers'), 'Disabling the opening keeps ordinary startup short');
+const openingArt = fixture({dirtyTiles: 0});
+await openingArt.finish(openingArt.instance.prepareMusicRenderer(true));
+assert.ok(openingArt.calls.indexOf('intro-covers') < openingArt.calls.indexOf('draw'),
+  'Opening artwork preparation must finish before either real warmup draw');
 
 const unboundedInputs = fixture({ dirtyTiles: 10000 });
 await unboundedInputs.finish(unboundedInputs.instance.prepareMusicRenderer());
 const boundedUploads = unboundedInputs.calls.filter(call => Array.isArray(call) && call[0] === "upload");
-assert.equal(boundedUploads.length, 12, "Newly arriving covers cannot extend the prewarm loop indefinitely");
-assert.equal(boundedUploads.reduce((sum, call) => sum + call[2], 0), 12 * 64);
+assert.equal(boundedUploads.length, 120, "Newly arriving covers cannot extend the prewarm loop indefinitely");
+assert.equal(boundedUploads.reduce((sum, call) => sum + call[2], 0), 120 * 4);
 assert.equal(unboundedInputs.calls.filter(call => call === "draw").length, 2);
+const slowUploads = fixture({dirtyTiles: 10000, uploadCostMs: 100});
+await slowUploads.finish(slowUploads.instance.prepareMusicRenderer());
+assert.ok(slowUploads.calls.filter(call => call[0] === 'upload').length < 25, 'Slow transfers hit the wall-time cap instead of extending the loading screen');
+const offscreen = fixture({offscreen: true});
+await offscreen.finish(offscreen.instance.prepareMusicRenderer());
+assert.equal(offscreen.calls.filter(call => call[0] === 'upload').length, 1, 'Offscreen dirty tiles do not cause an empty warmup loop');
 const warm = fixture({ dirtyTiles: 0 });
 await warm.finish(warm.instance.prepareMusicRenderer());
 assert.equal(warm.calls.filter(call => Array.isArray(call) && call[0] === "upload").length, 0);
@@ -194,7 +213,7 @@ assert.deepEqual(Object.fromEntries(resources.disposals), {
   sharedMaterial: 1, secondMaterial: 1, pointMaterial: 1,
   sharedTexture: 1, labelTexture: 1, environment: 1,
 }, "Shared meshes/material arrays release each owned geometry, material and standalone texture once; pass targets are owned by their pass");
-for (const name of ["covers.dispose", "shadow.dispose", ...Array.from({ length: 5 }, (_, i) => `pass${i}.dispose`),
+for (const name of ["returningPool.dispose", "covers.dispose", "shadow.dispose", ...Array.from({ length: 5 }, (_, i) => `pass${i}.dispose`),
   "composer.dispose", "scene.clear", "renderer.dispose", "renderer.forceContextLoss", "canvas.remove"])
   assert.equal(resources.calls.filter(call => call === name).length, 1, `${name} runs exactly once`);
 assert.deepEqual(resources.calls.slice(-3), ["renderer.dispose", "renderer.forceContextLoss", "canvas.remove"]);
@@ -243,7 +262,7 @@ qualityGeometry.dispose(); qualityMaterials.forEach(material => material.dispose
 
 console.log(JSON.stringify({
   sourceHash: createHash("sha256").update(compiled).update(qualityCode).digest("hex").slice(0, 12),
-  preparation: { coldTiles: 432, coldUploadTurns: 7, maximumUploadTurns: 12, maximumTilesPerTurn: 64, realDraws: 2 },
+  preparation: { coldTiles: 432, coldUploadTurns: coldUploads.length, maximumUploadTurns: boundedUploads.length, maximumTilesPerTurn: 4, realDraws: 2 },
   interruptionBoundaries: ["compile", "covers", "uploadFrame", "drawFrame"],
   disposal: { idempotent: true, uniqueResourceOwnership: true, passes: 5, contextLost: true, canvasRemoved: true },
   textureQuality: { atlasAnisotropy: 1, atlasReuploadsFromPresets: 0, selectionMaximum: 8, hardwareLimitRespected: true },

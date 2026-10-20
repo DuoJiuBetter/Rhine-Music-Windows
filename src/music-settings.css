@@ -110,6 +110,48 @@
 .settings-page .feedback-status { min-height: 1.7em; font-size: 12px; color: var(--muted); }
 .settings-page .feedback-address { font-size: 14px; color: var(--ink); }
 .settings-page .primary-button { border-radius: 8px; }
+/* One field size across local, display, audio and keyboard preferences. */
+.music-app .settings-page { --settings-control-height: 36px; --settings-control-width: 208px; }
+.music-app .settings-page :is(.settings-row, .quality-control) { min-height: 52px; font-size: 13px; }
+.music-app .settings-page select,
+.music-app .settings-page .shortcut-binding {
+  box-sizing: border-box;
+  width: var(--settings-control-width);
+  min-width: 0;
+  max-width: 55%;
+  height: var(--settings-control-height);
+  flex-shrink: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.music-app .settings-page select option { color: var(--ink); background: var(--surface); }
+.music-app .settings-page .settings-row input[type="range"] {
+  width: var(--settings-control-width);
+  max-width: 55%;
+  height: var(--settings-control-height);
+  margin: 0;
+  flex-shrink: 0;
+}
+.music-app .settings-page .quality-range input { width: var(--settings-control-width); min-width: 0; max-width: 100%; height: var(--settings-control-height); margin: 0; }
+.music-app .settings-page :is(.primary-button, .text-button) {
+  box-sizing: border-box;
+  min-height: var(--settings-control-height);
+  padding: 8px 12px !important;
+  margin: 4px 8px 4px 0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.music-app .settings-page .shortcut-binding { font-family: inherit; font-variant-numeric: tabular-nums; }
+.music-app .settings-page .shortcut-binding:hover,
+.music-app .settings-page .shortcut-binding[data-recording] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.keyboard-presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.music-app .settings-page #shortcut-status { min-height: 1.8em; margin-bottom: 0; }
 @media (max-width: 760px) {
   .music-panel.settings-window { grid-template-columns: 180px minmax(0, 1fr); }
   .settings-window > .panel-heading { padding-left: 22px; }
@@ -130,3 +172,19 @@
   .settings-page .settings-row input[type="checkbox"] { appearance: auto; }
   .settings-page .settings-row input[type="checkbox"]::after { display: none; }
 }
+
+/* Keep the active slider in place so the thumb never jumps under the pointer. */
+.lyric-settings-preview { position: absolute; inset: 0; z-index: 29; pointer-events: none; }
+.lyric-size-preview-active > #music-detail,
+.lyric-size-preview-active > #music-browse,
+.lyric-size-preview-active > #mini-playback-below { visibility: hidden; }
+.lyric-size-preview-active .settings-scrim,
+.lyric-size-preview-active .settings-window { background: transparent; backdrop-filter: none; }
+.lyric-size-preview-active .settings-window > .panel-heading,
+.lyric-size-preview-active .settings-navigation,
+.lyric-size-preview-active .settings-page > :not(:has(#lyric-area-size)) { visibility: hidden; }
+.lyric-size-preview-active .settings-page > :has(#lyric-area-size) { visibility: hidden; background: transparent; border-color: transparent; box-shadow: none; }
+.lyric-size-preview-active #lyric-area-size { visibility: visible; }
+.lyric-size-preview-active .settings-window > #panel-body { scrollbar-color: transparent transparent; }
+.lyric-size-preview-active .settings-window > #panel-body::-webkit-scrollbar-thumb,
+.lyric-size-preview-active .settings-window > #panel-body::-webkit-scrollbar-track { background: transparent; }

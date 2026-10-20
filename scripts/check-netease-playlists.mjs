@@ -154,3 +154,26 @@ test('visible playlist strips prefetch across song-page boundaries with two requ
     assert.ok(requests.some(item => item.id === '20' && item.offset === 100), 'first playlist preloads the last playlist and its tail songs across both seams');
   } finally { library.dispose(); globalThis.fetch = previousFetch; }
 });
+
+
+test('full playlist navigation wraps, crosses pages and shuffles outside the audio window', async t => {
+  const originalFetch=globalThis.fetch,originalRandom=Math.random,requests=[];
+  globalThis.fetch=async input=>{
+    const url=new URL(input,'http://127.0.0.1');
+    if(url.pathname.endsWith('/playlists')) return Response.json({playlists:[{id:'42',name:'Synthetic',trackCount:943}],hasMore:false});
+    const offset=Number(url.searchParams.get('offset'));requests.push(offset);
+    return Response.json({total:943,tracks:Array.from({length:Math.min(50,943-offset)},(_,i)=>({id:String(offset+i),title:`Song ${offset+i}`}))});
+  };
+  const library=new NeteasePlaylists(()=>{});
+  t.after(()=>{library.dispose();globalThis.fetch=originalFetch;Math.random=originalRandom;});
+  await library.load();await library.queue(0,942);
+  const wrapped=await library.playbackStep(0,'942',1,'sequential');
+  assert.equal(wrapped.id,'0');assert.ok(wrapped.queue.some(track=>track.id==='0'));
+  const previous=await library.playbackStep(0,'0',-1,'sequential');assert.equal(previous.id,'942');
+  await library.queue(0,99);
+  const crossed=await library.playbackStep(0,'99',1,'sequential');assert.equal(crossed.id,'100');
+  Math.random=()=>.99999;
+  const shuffled=await library.playbackStep(0,'0',1,'shuffle');assert.equal(shuffled.id,'942');
+  const history=await library.playbackStep(0,'942',-1,'shuffle',0);assert.equal(history.id,'0');
+  assert.ok(new Set(requests).size<10,'Navigation loads bounded adjacent pages, not all 943 songs');
+});

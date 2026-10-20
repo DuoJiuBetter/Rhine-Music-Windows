@@ -1,0 +1,19 @@
+.visualizer-color-row { align-items: flex-start; }
+.visualizer-color-row > span { padding-top: 9px; }
+.visualizer-color-row details { width: min(100%, 300px); }
+.visualizer-color-row summary { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-height: 36px; cursor: pointer; list-style: none; }
+.visualizer-color-row summary::-webkit-details-marker { display: none; }
+[data-color-swatch] { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); }
+.visualizer-color-editor { margin-top: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.visualizer-color-palette { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.visualizer-color-wheel { position: relative; width: 180px; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, white, transparent), conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
+.visualizer-color-value { position: relative; width: 20px; height: 180px; border-radius: 10px; background: linear-gradient(to bottom, var(--picker-hue), #000); }
+.visualizer-color-wheel, .visualizer-color-value { touch-action: none; cursor: crosshair; flex-shrink: 0; }
+[data-color-wheel-handle] { position: absolute; width: 13px; height: 13px; border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 4px #0008; transform: translate(-50%, -50%); pointer-events: none; }
+[data-color-value-handle] { position: absolute; left: -3px; right: -3px; height: 6px; border: 2px solid white; border-radius: 4px; box-shadow: 0 1px 4px #0008; transform: translateY(-50%); pointer-events: none; }
+.visualizer-color-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+.visualizer-color-footer label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 11px; letter-spacing: .06em; }
+.visualizer-color-footer input { width: 108px; min-height: 34px; box-sizing: border-box; padding: 6px 8px; color: var(--ink); background: var(--page-bg); border: 1px solid var(--line); border-radius: 6px; }
+.visualizer-color-footer button { white-space: nowrap; font-size: 12px; }
+.visualizer-color-editor p { margin: 14px 0 0; color: var(--muted); font-size: 11px; }
+@media (max-width: 640px) { .visualizer-color-row { flex-wrap: wrap; }.visualizer-color-row details { width: 100%; }.visualizer-color-palette { justify-content: center; } }

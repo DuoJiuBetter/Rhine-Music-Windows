@@ -41,13 +41,15 @@ try {
   await evaluate(`document.querySelector('.desktop-drag').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,detail:2}))`); await sleep(900); await checkMaximize('Native top double-click');
   report.checks.push('Native top double-click maximizes');
   await evaluate(`document.querySelector('[data-window="maximize"]').click()`); await sleep(700); assert.equal((await state()).maximized, false);
-  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'F11',bubbles:true}))`); await sleep(800); await checkMaximize('F11');
-  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'F11',bubbles:true}))`); await sleep(700); assert.equal((await state()).maximized, false);
-  report.checks.push('Transparent maximize/restore button and F11 use work area');
-  await evaluate(`const probe=document.createElement('button');probe.dataset.action='fullscreen';document.body.append(probe);probe.click();probe.remove()`); await sleep(800); await checkMaximize('Settings fullscreen action');
-  report.checks.push('Settings fullscreen control routes to work-area maximize');
-  await action('restore'); await sleep(600); await action('fullscreen'); await sleep(800); await checkMaximize('Legacy fullscreen action');
-  report.checks.push('Legacy fullscreen action never enters native fullscreen');
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'F11',bubbles:true}))`); await sleep(800); assert.equal((await state()).fullscreen,true);
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'F11',bubbles:true}))`); await sleep(700); assert.equal((await state()).fullscreen,false);
+  report.checks.push('F11 toggles native fullscreen separately from work-area maximize');
+  await action('maximize-window'); await sleep(800); await checkMaximize('Explicit work-area maximum');
+  await action('enter-fullscreen'); await sleep(800); assert.equal((await state()).fullscreen,true);
+  await action('leave-fullscreen'); await sleep(700); assert.equal((await state()).fullscreen,false);
+  await action('restore'); await sleep(600); await action('fullscreen'); await sleep(800); assert.equal((await state()).fullscreen,true);
+  await action('fullscreen'); await sleep(700); await action('maximize-window'); await sleep(700); await checkMaximize('Restored work-area maximum');
+  report.checks.push('Explicit fullscreen/leave/restore actions are distinct from maximum');
   const screenshot = await command('Page.captureScreenshot'); await fs.writeFile(`${root}/artifacts/desktop-ui/maximized-window.png`, Buffer.from(screenshot.data, 'base64'));
   if (process.env.RHINE_CHECK_PLAYLIST_GRID === '1') {
     // Test-only CDP fixture: never part of the application or a real account session.

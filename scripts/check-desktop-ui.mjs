@@ -67,11 +67,11 @@ try {
   assert.equal(await page.locator('[data-window="maximize"]').getAttribute('aria-label'), '还原');
   await page.locator('[data-window="maximize"]').click(); await page.waitForTimeout(800);
   assert.equal((await stateNow()).maximized, false); report.checks.push('Native maximize and restore through visible buttons');
-  await page.keyboard.press('F11'); await page.waitForTimeout(800); await checkWorkArea();
-  await page.keyboard.press('F11'); await page.waitForTimeout(800); assert.equal((await stateNow()).maximized, false);
-  await page.keyboard.press('F11'); await page.waitForTimeout(1500); await checkWorkArea();
+  await page.keyboard.press('F11'); await page.waitForTimeout(800); assert.equal((await stateNow()).fullscreen, true);
+  await page.keyboard.press('F11'); await page.waitForTimeout(800); assert.equal((await stateNow()).fullscreen, false);
+  await invoke('maximize-window'); await page.waitForTimeout(1500); await checkWorkArea();
   assert.equal(await page.locator('html').evaluate(element => element.classList.contains('desktop-maximized')), true);
-  report.checks.push('F11 toggles work-area maximize without entering native fullscreen');
+  report.checks.push('F11 toggles fullscreen; explicit maximum keeps work area');
   await page.screenshot({ path: path.join(output, 'maximized-day.png'), timeout: 15000 });
   const capture = async name => {
     const item = await page.evaluate(() => {
@@ -97,7 +97,7 @@ try {
   assert.equal(await page.evaluate(() => window.rhineMusic.presentation.phase), 'archive');
   report.checks.push('Escape in detail returns to archive while preserving maximize');
   await page.keyboard.press('Escape'); await page.waitForTimeout(800); assert.equal((await stateNow()).maximized, false);
-  await page.keyboard.press('F11'); await page.waitForTimeout(800); await checkWorkArea();
+  await invoke('maximize-window'); await page.waitForTimeout(800); await checkWorkArea();
   report.checks.push('Escape in archive restores the window');
   await page.keyboard.press('v'); await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(output, 'overview-night.png'), timeout: 15000 });

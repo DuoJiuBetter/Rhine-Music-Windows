@@ -110,6 +110,20 @@ const dsdTrack = (format, legacy = false) => {
 }
 const near = (actual, expected, message = `expected ${actual} ≈ ${expected}`) => assert.ok(Math.abs(actual - expected) < 0.0001, message)
 
+test('online pause captures the exact media position and resume reuses the same source', async t => {
+  const env=environment(t),originalFetch=globalThis.fetch;let requests=0;
+  globalThis.fetch=async()=>{requests++;return{ok:true,json:async()=>({audioUrl:'/api/online/audio/synthetic'})};};
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const source={...track('online-resume'),onlineSource:{provider:'netease',id:'123'}};
+  const player=new MusicPlayer({bgmEnabled:false,songFadeEnabled:false});
+  await player.play(source.id,[source]);const audio=env.instances.at(-1);
+  audio.currentTime=37.25; // Pause before the next periodic timeupdate arrives.
+  await player.toggle();assert.equal(player.state.transport,'paused');near(player.state.currentTime,37.25);
+  await player.toggle();assert.equal(player.state.transport,'playing');near(audio.currentTime,37.25);
+  assert.equal(env.instances.at(-1),audio);assert.equal(requests,1,'resume neither resolves another URL nor starts from zero');
+  player.dispose();
+});
+
 test('online playback resolves a fresh source and rejects stale responses after a song change', async t => {
   const env = environment(t), originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
@@ -543,7 +557,7 @@ for (const mode of transitionModes) {
     })
   }
 
-  test(`${mode}: natural queue advance stays silent between songs and ends at the queue boundary`, async (t) => {
+  test(`${mode}: natural queue advance stays silent and wraps the queue boundary`, async (t) => {
     const env = environment(t)
     const player = new MusicPlayer({ songTransitionMode: mode, volume: 0.6, bgmVolume: 0.3 })
     env.gesture()
@@ -566,14 +580,14 @@ for (const mode of transitionModes) {
     assert.ok(!states.includes('idle'), 'queue handoff has no idle intermediate state')
     finishSong(second)
     await env.advance(700)
-    assert.equal(player.state.transport, 'idle')
-    assert.equal(player.state.currentTrack.id, 'second')
-    assert.equal(env.instances.length, 3, 'the last track does not wrap or create another song')
-    assert.equal(bgm.playCalls, bgmStarts + 1)
-    near(bgm.volume, 0.3)
+    assert.equal(player.state.transport, 'playing')
+    assert.equal(player.state.currentTrack.id, 'first')
+    assert.equal(env.instances.length, 4, 'the last track wraps to a fresh first song')
+    assert.equal(bgm.playCalls, bgmStarts)
+    near(bgm.volume, 0)
     finishSong(second)
     await env.advance(500)
-    assert.equal(env.instances.length, 3, 'duplicate ended cannot restart the queue')
+    assert.equal(env.instances.length, 4, 'duplicate ended cannot advance the queue twice')
     unsubscribe()
     player.dispose()
     assert.equal(env.pendingTimers(), 0)
@@ -1009,3 +1023,261 @@ for (const format of ['DSF', 'DFF']) {
     await settle()
   })
 }
+
+
+test('shuffle skips the current song and previous returns through playback history', async t => {
+  const env = environment(t);
+  const player = new MusicPlayer({ songTransitionMode: 'gapless', bgmEnabled: false, playbackMode: 'shuffle' });
+  // Online sources use the normal media element path in this fixture.
+  await playSettled(env, player, 'a', ['a','b','c'].map(track));
+  await player.next(); await settle();
+  const second = player.state.currentTrack.id;
+  assert.notEqual(second, 'a');
+  await player.next(); await settle();
+  assert.notEqual(player.state.currentTrack.id, second);
+  await player.previous(); await settle();
+  assert.equal(player.state.currentTrack.id, second);
+  await player.previous(); await settle();
+  assert.equal(player.state.currentTrack.id, 'a');
+  player.setPlaybackMode('sequential');
+  assert.equal(player.state.playbackMode, 'sequential');
+  await player.next(); await settle();
+  assert.equal(player.state.currentTrack.id, 'b');
+  player.dispose();
+});
+
+test('one song naturally repeats from zero exactly once per ended event', async t => {
+  const env = environment(t);
+  const player = new MusicPlayer({ songTransitionMode: 'gapless', bgmEnabled: false });
+  await playSettled(env, player, 'only', [track('only')]);
+  const first = env.instances[1];
+  finishSong(first); finishSong(first); await settle();
+  assert.equal(player.state.currentTrack.id, 'only');
+  assert.equal(player.state.transport, 'playing');
+  assert.equal(player.state.currentTime, 0);
+  assert.equal(env.instances.length, 3);
+  player.dispose();
+});
+
+test('automatic navigation uses the full playlist resolver instead of wrapping a page window', async t => {
+  const env = environment(t);
+  const player = new MusicPlayer({ songTransitionMode: 'gapless', bgmEnabled: false });
+  const calls = [];
+  player.setQueueNavigator(async (direction, mode) => {
+    calls.push({direction, mode});
+    return {id:'first',queue:[track('first'),track('second')]};
+  });
+  await playSettled(env, player, 'last', [track('penultimate'),track('last')]);
+  finishSong(env.instances[1]); await settle();
+  assert.equal(player.state.currentTrack.id, 'first');
+  assert.deepEqual(calls, [{direction:1,mode:'sequential'}]);
+  player.dispose();
+});
+
+test('stop cancels an asynchronous playlist successor', async t => {
+  const env = environment(t);
+  const player = new MusicPlayer({ songTransitionMode: 'gapless', bgmEnabled: false });
+  let release;
+  player.setQueueNavigator(() => new Promise(resolve => {release=resolve;}));
+  await playSettled(env, player, 'last', [track('last')]);
+  finishSong(env.instances[1]); await settle();
+  player.stop();
+  release({id:'first',queue:[track('first')]}); await settle();
+  assert.equal(player.state.transport, 'idle');
+  assert.equal(env.instances.length, 2);
+  player.dispose();
+});
+
+
+test('native ordinary playback wraps its ended serial to the first track', async t => {
+  const env=environment(t),native=nativeFetch(t);
+  const player=new MusicPlayer({songTransitionMode:'fade-out',bgmEnabled:false});
+  await player.setBackend('coreaudio');
+  await player.play('last',['first','last'].map(track)); await settle();
+  Object.assign(native.state,{trackId:'last',playing:false,endedSerial:1,currentTime:120});
+  await env.advance(250); await settle();
+  assert.equal(player.state.currentTrack.id,'first');
+  assert.equal(player.state.transport,'playing');
+  assert.equal(native.calls.filter(command=>command.action==='play').length,2);
+  player.dispose(); await settle();
+});
+
+
+test('temporary browser rate applies live, survives a track switch and stop resets it', async t=>{
+  const env=environment(t),player=new MusicPlayer({songTransitionMode:'gapless',bgmEnabled:false});
+  await playSettled(env,player,'a',['a','b'].map(track));
+  const first=env.instances.at(-1);
+  player.setPlaybackRate(2);assert.equal(first.playbackRate,2);assert.equal(player.state.playbackRate,2);
+  await player.next();await settle();assert.equal(env.instances.at(-1).playbackRate,2);
+  player.setPlaybackRate(1);assert.equal(env.instances.at(-1).playbackRate,1);
+  player.seek(-15);assert.equal(player.state.currentTime,0);
+  player.seek(9999);assert.equal(player.state.currentTime,120);
+  player.setPlaybackRate(2);player.stop();assert.equal(player.state.playbackRate,1);
+  player.dispose();
+});
+
+for (const mode of ['fade-out','fade-in-out','gapless']) test(`single repeat: ${mode} ends at zero without consulting the full-playlist navigator`, async t => {
+  const env=environment(t), player=new MusicPlayer({volume:0,bgmEnabled:false,songTransitionMode:mode,playbackMode:'repeat-one'});
+  try {
+    let navigation=0; player.setQueueNavigator(async()=>{navigation++;return{id:'b',queue:[track('a'),track('b')]}});
+    await playSettled(env,player,'a',[track('a'),track('b')]);
+    finishSong(env.instances.at(-1));await env.advance(1000);
+    assert.equal(player.state.currentTrack.id,'a');assert.equal(player.state.playbackMode,'repeat-one');assert.equal(player.state.currentTime,0);assert.equal(navigation,0);assert.equal(player.state.playing,true);
+    player.queueNext(track('c'));finishSong(env.instances.at(-1));await env.advance(1000);
+    assert.equal(player.state.currentTrack.id,'c','explicit next-up still takes priority');
+    finishSong(env.instances.at(-1));await env.advance(1000);assert.equal(player.state.currentTrack.id,'a','temporary insert returns to the original repeated song');
+  } finally {player.dispose()}
+});
+
+test('single repeat manual next/previous use sequential navigation; changing mode preserves a paused position',async t=>{
+  const env=environment(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false,playbackMode:'repeat-one'});
+  try {
+    await player.play('a',['a','b','c'].map(track));await player.next();assert.equal(player.state.currentTrack.id,'b');
+    await player.previous();assert.equal(player.state.currentTrack.id,'a');
+    const calls=[];player.setQueueNavigator(async(direction,mode)=>{calls.push({direction,mode});return{id:direction>0?'c':'a',queue:['a','b','c'].map(track)}});
+    await player.next();assert.equal(player.state.currentTrack.id,'c');await player.previous();assert.equal(player.state.currentTrack.id,'a');
+    assert.deepEqual(calls,[{direction:1,mode:'sequential'},{direction:-1,mode:'sequential'}]);
+    env.instances.at(-1).currentTime=37;await player.toggle();player.setPlaybackMode('shuffle');player.setPlaybackMode('repeat-one');
+    assert.equal(player.state.currentTime,37);assert.equal(player.state.transport,'paused');
+  } finally {player.dispose()}
+});
+
+test('native ordinary single repeat restarts its current song on ended serial',async t=>{
+  const env=environment(t),native=nativeFetch(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songTransitionMode:'fade-out',playbackMode:'repeat-one'});
+  try {
+    await player.setBackend('coreaudio');await player.play('a',['a','b'].map(track));await settle();
+    Object.assign(native.state,{trackId:'a',playing:false,endedSerial:1,currentTime:120});await env.advance(250);await settle();
+    assert.equal(player.state.currentTrack.id,'a');assert.equal(player.state.transport,'playing');assert.equal(player.state.currentTime,0);
+  } finally {player.dispose();await settle()}
+});
+
+test('native gapless single repeat prepares another loop when same-ID boundary serial changes',async t=>{
+  const env=environment(t),native=nativeFetch(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songTransitionMode:'gapless',playbackMode:'repeat-one'});
+  try {
+    await player.setBackend('coreaudio');await player.play('a',['a','b'].map(track));await settle();
+    const before=native.calls.filter(c=>c.action==='prepareNext').length;
+    assert.equal(native.state.nextTrackId,'a');Object.assign(native.state,{boundarySerial:1,currentTime:0,nextTrackId:''});
+    await env.advance(250);await settle();assert.equal(player.state.currentTrack.id,'a');assert.equal(native.state.nextTrackId,'a');assert.equal(native.calls.filter(c=>c.action==='prepareNext').length,before+1);
+    assert.equal(player.state.transitionWarning,null);
+  } finally {player.dispose();await settle()}
+});
+
+test('explicit play-next preserves playback position, overrides shuffle and paged navigation, and preserves repeated occurrences', async t => {
+  const env = environment(t), player = new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  try {
+  await player.play('a',[track('a'),track('b')]); const audio=env.instances.at(-1);audio.currentTime=37;
+  let navigations=0;player.setQueueNavigator(async()=>{navigations++;return {id:'b',queue:[track('a'),track('b')]}});
+  player.setPlaybackMode('shuffle');player.queueNext(track('x'));player.queueNext(track('x'));
+  assert.equal(player.state.currentTrack.id,'a');assert.equal(audio.currentTime,37);assert.equal(player.state.queue.filter(t=>t.id==='x').length,2);
+  player.queueNext(track('y')); await player.next(); assert.equal(player.state.currentTrack.id,'y');assert.equal(navigations,0);
+  await player.next();assert.equal(player.state.currentTrack.id,'x');assert.equal(navigations,0);
+  await player.next();assert.equal(player.state.currentTrack.id,'x');assert.equal(navigations,0);
+  await player.next();assert.equal(player.state.currentTrack.id,'b');assert.equal(navigations,1);
+  } finally { player.dispose(); }
+});
+
+
+test('temporary search playback resumes the original source cursor, even when inserted song belongs to that playlist', async t => {
+  const env=environment(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  const original=Object.freeze([track('a'),track('b'),track('c'),track('d')]);
+  await player.play('b',original);
+  const anchors=[];
+  player.setQueueNavigator(async direction=>{const anchor=player.navigationTrack.id;anchors.push(anchor);const index=original.findIndex(item=>item.id===anchor);return{id:original[(index+direction+original.length)%original.length].id,queue:original};});
+  await player.playTemporary(track('d'),{type:'search',name:'test',provider:'netease'});
+  assert.equal(player.state.currentTrack.id,'d');assert.equal(player.navigationTrack.id,'b');
+  assert.equal(env.instances.at(-1).src,'/api/audio/d');
+  await player.next();assert.equal(player.state.currentTrack.id,'c');assert.deepEqual(anchors,['b']);
+  assert.deepEqual(original.map(item=>item.id),['a','b','c','d']);assert.ok(original.every(item=>!item.queueEntry));player.dispose();
+});
+
+test('same-song occurrences have distinct queue/model identities and restart instead of resuming another occurrence',async t=>{
+  const env=environment(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  await player.play('a',[track('a'),track('b')]);env.instances.at(-1).currentTime=45;
+  player.queueNext(track('a'));player.queueNext(track('a'));
+  const copies=player.state.queue.filter(item=>item.id==='a');assert.equal(new Set(copies.map(item=>item.queueEntry?.id||item.id)).size,3);
+  await player.next();const first=player.state.currentTrack.queueEntry.id;assert.equal(env.instances.at(-1).currentTime,0);
+  env.instances.at(-1).currentTime=18;await player.toggle();await player.toggle();assert.equal(env.instances.at(-1).currentTime,18);
+  await player.next();assert.notEqual(player.state.currentTrack.queueEntry.id,first);assert.equal(env.instances.at(-1).currentTime,0);
+  await player.next();assert.equal(player.state.currentTrack.id,'b');player.dispose();
+});
+
+test('page refresh retains current and pending inserts; previous returns through actual inserted history',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  await player.play('b',[track('a'),track('b'),track('c'),track('d')]);
+  player.queueNext(track('x'));player.queueNext(track('y'));await player.next();assert.equal(player.state.currentTrack.id,'y');
+  player.setQueue([track('b'),track('c'),track('d')]);assert.equal(player.state.currentTrack.id,'y');
+  await player.next();assert.equal(player.state.currentTrack.id,'x');await player.previous();assert.equal(player.state.currentTrack.id,'y');
+  await player.next();assert.equal(player.state.currentTrack.id,'c');player.dispose();
+});
+
+test('queue reorder and deletion change this session without mutating the source or losing inserts on a refresh',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  const source=[track('a'),track('b'),track('c'),track('d')];await player.play('b',source);player.queueNext(track('x'));player.queueNext(track('y'));
+  player.moveQueueEntry('c',-1);player.removeQueueEntry('d');player.setQueue(source);
+  const played=[];for(let i=0;i<3;i++){await player.next();played.push(player.state.currentTrack.id);}
+  assert.deepEqual(played,['y','c','x']);assert.deepEqual(source.map(item=>item.id),['a','b','c','d']);
+  assert.ok(!player.state.queue.some(item=>item.id==='d'));
+  player.clearQueue();assert.equal(player.state.currentTrack,null);assert.equal(player.state.queue.length,0);assert.equal(player.navigationTrack,undefined);player.dispose();
+});
+
+test('manual insertion does not repeat after source loop; pending capacity is bounded',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  await player.play('a',[track('a'),track('b')]);player.queueNext(track('x'));
+  const played=[];for(let i=0;i<5;i++){await player.next();played.push(player.state.currentTrack.id);}
+  assert.deepEqual(played,['x','b','a','b','a']);
+  for(let i=0;i<100;i++)assert.equal(player.queueNext(track('x')),true);
+  assert.equal(player.queueNext(track('x')),false);player.dispose();
+});
+
+
+test('revisiting a played insert restores its own continuation rather than the most recent source cursor',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  const source=[track('a'),track('b'),track('c'),track('d')];await player.play('b',source);await player.playTemporary(track('x'));
+  player.setQueueNavigator(async direction=>{const index=source.findIndex(item=>item.id===player.navigationTrack.id);return{id:source[(index+direction+source.length)%source.length].id,queue:source}});
+  await player.next();assert.equal(player.state.currentTrack.id,'c');await player.previous();assert.equal(player.state.currentTrack.id,'x');
+  await player.next();assert.equal(player.state.currentTrack.id,'c');
+  player.removeQueueEntry('b');await player.previous();assert.equal(player.state.currentTrack.id,'x');await player.previous();assert.notEqual(player.state.currentTrack.id,'b');player.dispose();
+});
+
+test('editing a paused queue leaves media position and transport untouched',async t=>{
+  const env=environment(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  await player.play('a',[track('a'),track('b'),track('c')]);const audio=env.instances.at(-1);audio.currentTime=28;await player.toggle();
+  player.queueNext(track('x'));player.moveQueueEntry('c',-1);player.removeQueueEntry('b');
+  assert.equal(player.state.transport,'paused');assert.equal(audio.currentTime,28);assert.equal(audio.paused,true);assert.equal(env.instances.at(-1),audio);player.dispose();
+});
+
+
+test('single repeat resumes its original song after one-shot inserts instead of trapping playback on the insert',async t=>{
+  const env=environment(t),player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false,playbackMode:'repeat-one'});
+  await player.play('a',[track('a'),track('b')]);player.queueNext(track('x'));
+  for(const expected of ['x','a','a']){const audio=env.instances.at(-1);audio.ended=true;audio.dispatchEvent(new Event('ended'));await env.advance(100);assert.equal(player.state.currentTrack.id,expected);}
+  player.dispose();
+});
+
+test('search replaces the current slot, retains pending next-up and source continuation without modifying the source',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  const source=['a','b','c','d'].map(track);await player.play('b',source);player.queueNext(track('insert'));
+  await player.replaceCurrent(track('x'),{type:'search',name:'search',provider:'netease'});
+  assert.deepEqual(player.state.queue.map(t=>t.id),['a','x','insert','c','d']);
+  assert.equal(player.state.currentIndex,1);assert.equal(player.navigationTrack.id,'b');
+  await player.next();assert.equal(player.state.currentTrack.id,'insert');
+  await player.next();assert.equal(player.state.currentTrack.id,'c');
+  for(const id of ['d','a','x']){await player.next();assert.equal(player.state.currentTrack.id,id);}
+  assert.deepEqual(source.map(t=>t.id),['a','b','c','d']);player.dispose();
+});
+
+test('a paged refresh does not restore a replaced source song or evict replacement playback',async t=>{
+  environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false});
+  const source=['a','b','c','d'].map(track);await player.play('b',source);await player.replaceCurrent(track('x'));
+  player.setQueue(source);assert.deepEqual(player.state.queue.map(t=>t.id),['a','x','c','d']);
+  assert.equal(player.state.currentTrack.id,'x');await player.next();assert.equal(player.state.currentTrack.id,'c');player.dispose();
+});
+
+test('repeat-one loops a replacement, returns to it after next-up, and repeated replacement keeps the same slot',async t=>{
+  const env=environment(t);const player=new MusicPlayer({volume:0,bgmEnabled:false,songFadeEnabled:false,playbackMode:'repeat-one'});
+  await player.play('b',['a','b','c'].map(track));await player.replaceCurrent(track('x'));await player.replaceCurrent(track('y'));
+  assert.deepEqual(player.state.queue.map(t=>t.id),['a','y','c']);assert.equal(player.navigationTrack.id,'b');
+  const end=async()=>{const audio=env.instances.at(-1);audio.ended=true;audio.dispatchEvent(new Event('ended'));await env.advance(100);};
+  await end();assert.equal(player.state.currentTrack.id,'y');player.queueNext(track('z'));
+  await end();assert.equal(player.state.currentTrack.id,'z');await end();assert.equal(player.state.currentTrack.id,'y');player.dispose();
+});

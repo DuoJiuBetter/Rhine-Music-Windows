@@ -4,8 +4,10 @@ import "./online-music-search.css";
 import { NeteaseLogin } from './netease-login';
 import { musicPlatforms } from './music-platform';
 import { fetchOnline } from './online-debug';
+import { songActionButton, songActionIcons } from './music-song-actions';
 
 export class OnlineMusicSearch {
+  get modelSource() { return { tracks: this.results?.tracks ?? [], name: this.query, provider: this.login.provider }; }
   private controller?: AbortController;
   private generation = 0;
   private results?: OnlineSearchResults;
@@ -13,7 +15,7 @@ export class OnlineMusicSearch {
   private offset = 0;
   private container?: HTMLElement;
   private playback: { id?: string; playing: boolean; loading: boolean } = { playing: false, loading: false };
-  constructor(private play: (track: MusicTrack, queue: MusicTrack[]) => void, private login = new NeteaseLogin()) {}
+  constructor(private play: (track: MusicTrack, queue: MusicTrack[]) => void, private login = new NeteaseLogin(), private addToPlaylist?: (track: MusicTrack) => void, private playNext?: (track: MusicTrack) => void) {}
   setLogin(login: NeteaseLogin) {
     if (this.login === login) return;
     this.dispose(); this.login = login; this.results = undefined; this.query = ''; this.offset = 0;
@@ -33,7 +35,9 @@ export class OnlineMusicSearch {
     this.container?.querySelectorAll<HTMLButtonElement>('[data-online-track]').forEach(button => {
       const active = button.dataset.onlineTrack === id;
       button.setAttribute('aria-pressed', String(active && playing));
-      button.querySelector('i')!.textContent = active && loading ? '…' : active && playing ? 'Ⅱ' : '▷';
+      const kind = active && loading ? 'loading' : active && playing ? 'pause' : 'play';
+      const icon = button.querySelector<HTMLElement>('i');
+      if (icon) { icon.innerHTML = songActionIcons[kind]; icon.dataset.songActionIcon = kind; }
       const track = this.results?.tracks.find(track => track.id === button.dataset.onlineTrack);
       if (track) button.setAttribute('aria-label', `${active && playing ? '暂停' : '播放'} ${track.title}，${track.artist}`);
     });
@@ -53,8 +57,17 @@ export class OnlineMusicSearch {
       if (!button) return;
       if (button.dataset.onlinePage !== undefined) void this.search(this.query, Number(button.dataset.onlinePage));
       if (button.dataset.onlineRetry !== undefined) void this.search(this.query, this.offset);
-      if (button.dataset.onlineTrack) {
-        const track = this.results?.tracks.find(track => track.id === button.dataset.onlineTrack);
+      if (button.dataset.onlineAdd) {
+        const track = this.results?.tracks.find(track => track.id === button.dataset.onlineAdd);
+        if (track) this.addToPlaylist?.(track);
+      }
+      if (button.dataset.onlineNext) {
+        const track = this.results?.tracks.find(track => track.id === button.dataset.onlineNext);
+        if (track) this.playNext?.(track);
+      }
+      const playId = button.dataset.onlineTrack || button.dataset.onlineSelect;
+      if (playId) {
+        const track = this.results?.tracks.find(track => track.id === playId);
         if (track && this.results) this.play(track, this.results.tracks);
       }
     });
@@ -72,7 +85,7 @@ export class OnlineMusicSearch {
     results.innerHTML = value.tracks.length ? value.tracks.map(track => {
       const source = track.onlineSource!;
       const cover = source.coverUrl ? `<img src="${esc(source.coverUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '<span aria-hidden="true">♪</span>';
-      return `<div class="online-song"><button class="album-result" data-online-track="${esc(track.id)}" aria-label="播放 ${esc(track.title)}，${esc(track.artist)}"><span class="result-cover">${cover}</span><span class="result-copy"><strong>${esc(track.title)}</strong><small>${esc(track.artist)} · ${esc(source.albumTitle)}</small></span><em>${source.fee === 1 || source.fee === 4 ? "付费/试听" : "在线"}</em><i>▷</i></button><a class="online-source-link" href="${esc(source.pageUrl)}" target="_blank" rel="noopener noreferrer">在${musicPlatforms[source.provider]}查看 ↗</a></div>`;
+      return `<div class="online-song"><div class="online-song-row"><button type="button" class="album-result" data-online-select="${esc(track.id)}" aria-label="选择并播放 ${esc(track.title)}"><span class="result-cover">${cover}</span><span class="result-copy"><strong>${esc(track.title)}</strong><small>${esc(track.artist)} · ${esc(source.albumTitle)}</small></span><em>${source.fee === 1 || source.fee === 4 ? "付费/试听" : "在线"}</em></button><div class="row-song-actions" role="group" aria-label="${esc(track.title)}的操作">${songActionButton('play', `播放 ${track.title}，${track.artist}`, { 'data-online-track': track.id })}${this.playNext ? songActionButton('next', `下一首播放 ${track.title}`, { 'data-online-next': track.id }) : ''}${this.addToPlaylist ? songActionButton('add', `将 ${track.title} 添加到歌单`, { 'data-online-add': track.id }) : ''}</div></div></div>`;
     }).join("") : '<div class="no-results">没有找到歌曲。</div>';
     pages.innerHTML = `${value.offset ? `<button data-online-page="${value.offset - value.limit}">← 上一页</button>` : ""}${value.hasMore && value.offset < 1000 ? `<button data-online-page="${value.offset + value.limit}">下一页 →</button>` : ""}`;
     this.setPlayback(this.playback.id, this.playback.playing, this.playback.loading, true);
@@ -83,7 +96,7 @@ export class OnlineMusicSearch {
     const container = this.container; if (!container) return;
     const status = container.querySelector<HTMLElement>(".online-search-status")!;
     status.textContent = `正在搜索${musicPlatforms[this.login.provider]}…`; container.setAttribute("aria-busy", "true");
-    container.querySelectorAll<HTMLButtonElement>("[data-online-page], [data-online-track]").forEach(button => button.disabled = true);
+    container.querySelectorAll<HTMLButtonElement>("[data-online-page], [data-online-track], [data-online-select], [data-online-next], [data-online-add]").forEach(button => button.disabled = true);
     try {
       const response = await fetchOnline(this.login.provider, 'search', `/api/online/${this.login.provider}/search?q=${encodeURIComponent(query)}&offset=${offset}`, { signal: controller.signal });
       const value = await response.json() as OnlineSearchResults & { error?: string };

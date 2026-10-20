@@ -4,6 +4,8 @@
 
 ## Windows 社区分发
 
+2026-10-19 启动片头复用 Twilight Echo 的 [Rhine Lab 扩展 loading-opening](https://github.com/Px-asen/Twilight-Echo-plugins/tree/d1c4b201daec7ac1fe88d8901952ed1a27f1e6d1/plugins/rhine-lab/src/loading-opening)，该扩展标注视觉动画源自 LBEILC/RhineLabUI 提交 `12cc5e4013acb9408f753ff71de6b8492299b7c8`，保留 LBEILC、RonaldDeng 版权及 MIT 许可。完整许可见 [loading-opening-mit.txt](public/licenses/loading-opening-mit.txt)，来源与修改说明见 [src/loading-opening/SOURCE.md](src/loading-opening/SOURCE.md)。Windows 版调整项目文字、启动生命周期、开关、跳过及隐藏窗口行为，复用既有 MiSans，不加入参考视频、原 PV 录音或外部字体。
+
 本衍生版由 **DuoJiuBetter** 维护，基于 RonaldDeng 的音乐适配和 LBEILC 的视觉基础；保留已有版权与许可。当前公开发行包不捆绑 FFmpeg / ffprobe，内置 Node.js 的许可位于 third-party/NODE-LICENSE.txt；原生依赖许可材料随公开包提供。第三方平台、账号与权利反馈详见 [PLATFORM-NOTICE.md](PLATFORM-NOTICE.md)，隐私说明见 [PRIVACY.md](PRIVACY.md)。Windows 版问题及权利联系邮箱为 **2228396737@qq.com**；上游作者不承担本衍生版支持。以下原有署名和资源来源继续保留。
 
 ## 开发者与上游
@@ -50,6 +52,8 @@ V0.4.0 音频解码通过独立子进程调用用户本机安装的 FFmpeg / ffp
 APE 回归仅在本机临时目录使用 [FFmpeg 官方音频样本](https://samples.ffmpeg.org/A-codecs/lossless/)中的 `luckynight.ape`；它是官方说明所述的一分钟 CD 节选测试样本，来源标注不代表授予音乐再分发许可。文件没有复制进项目，也不进入任何源码包。其他新增音频测试使用现场生成的短正弦波，不使用用户私人曲库。路线与验证详见 [AUDIO-V0.4.0.md](docs/AUDIO-V0.4.0.md)。
 
 ## 在线资料
+
+Together1 的一起听适配参考 [Cove Resonance](https://github.com/yanceydaisy/cove-resonance) 的公开协议与原生票据连接流程，保留 [MIT 许可](third-party/Cove-Resonance-LICENSE.txt)。聊天依赖网易云云信 [node-nim](https://github.com/netease-im/node-nim) 10.10.13，npm 元数据标注 ISC；其附带下载的原生 SDK 另须核实再分发授权，当前仅用于本机开发体验，见 [依赖说明](third-party/NODE-NIM-NOTICE.md)。本项目不宣称获得平台的官方合作或服务授权。
 
 Perf21 使用 Undici 7.28.0（MIT）的独立连接池，将网易云 API 固定为 IPv4；完整许可见 [Undici-LICENSE.txt](third-party/Undici-LICENSE.txt)，版本固定于 package-lock.json。保留 Node 内置 fetch 及已有协议、TLS 校验、超时和诊断流程，不改动其他平台或系统网络设置。来源：[nodejs/undici](https://github.com/nodejs/undici)。
 

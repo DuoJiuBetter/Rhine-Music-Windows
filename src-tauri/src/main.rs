@@ -2,6 +2,7 @@
 
 use std::{io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, Command, Stdio}, sync::Mutex, time::{Duration, Instant}};
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+mod instance_handoff;
 
 // NVIDIA Optimus' documented application hint. MSVC exports this DWORD in
 // build.rs even with LTO/stripping. WebView2's GPU subprocess also needs the
@@ -43,18 +44,50 @@ impl MusicService {
 impl Drop for MusicService { fn drop(&mut self) { self.stop(); } }
 
 #[tauri::command]
-fn desktop_window_state(window: WebviewWindow) -> serde_json::Value {
-    serde_json::json!({ "fullscreen": window.is_fullscreen().unwrap_or(false), "maximized": window.is_maximized().unwrap_or(false) })
+async fn desktop_window_state(window: WebviewWindow) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(serde_json::json!({ "fullscreen": window.is_fullscreen().map_err(|e| e.to_string())?, "maximized": window.is_maximized().map_err(|e| e.to_string())? }))
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn enter_window_fullscreen(window: &WebviewWindow) -> tauri::Result<()> {
+    if !window.is_fullscreen()? {
+        // Tao's Windows WM_NCCALCSIZE path uses rcWork whenever IsZoomed is
+        // still true, even for borderless fullscreen. Clear maximize first so
+        // the client area covers rcMonitor instead of stopping at the taskbar.
+        window.unmaximize()?;
+        window.set_fullscreen(true)?;
+    }
+    // Activate after marking fullscreen so the shell can lower the taskbar.
+    window.set_focus()
 }
 
 #[tauri::command]
-fn desktop_window_action(window: WebviewWindow, action: &str) -> Result<(), String> {
+async fn desktop_window_action(window: WebviewWindow, action: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || apply_window_action(window, &action))
+        .await.map_err(|e| e.to_string())?
+}
+
+fn apply_window_action(window: WebviewWindow, action: &str) -> Result<(), String> {
     match action {
         "minimize" => window.minimize(),
         // Maximize uses the Windows work area, leaving the taskbar available.
-        // Keep old action names compatible without entering native fullscreen.
-        "maximize" | "fullscreen" => if window.is_maximized().unwrap_or(false) { window.unmaximize() } else { window.maximize() },
-        "restore" | "leave-fullscreen" => window.unmaximize(),
+        "maximize" => {
+            if window.is_fullscreen().unwrap_or(false) { window.set_fullscreen(false) }
+            else if window.is_maximized().unwrap_or(false) { window.unmaximize() }
+            else { window.maximize() }
+        },
+        "maximize-window" => {
+            window.set_fullscreen(false).map_err(|e| e.to_string())?;
+            window.maximize()
+        },
+        "fullscreen" => if window.is_fullscreen().unwrap_or(false) { window.set_fullscreen(false) } else { enter_window_fullscreen(&window) },
+        "enter-fullscreen" => enter_window_fullscreen(&window),
+        "leave-fullscreen" => window.set_fullscreen(false),
+        "restore" => {
+            window.set_fullscreen(false).map_err(|e| e.to_string())?;
+            window.unmaximize()
+        },
         "close" => window.close(),
         _ => return Err("Unknown window action".into()),
     }.map_err(|e| e.to_string())
@@ -128,10 +161,13 @@ fn start_service(app: &tauri::AppHandle) -> Result<(MusicService, tauri::Url), B
 }
 
 fn main() {
+    if instance_handoff::forward_existing() { return; }
     request_high_performance_gpu();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") { let _ = window.unminimize(); let _ = window.show(); let _ = window.set_focus(); }
+            if let Some(window) = app.get_webview_window("main") {
+                tauri::async_runtime::spawn_blocking(move || { let _ = window.unminimize(); let _ = window.show(); let _ = window.set_focus(); });
+            }
         }))
         .plugin(tauri_plugin_window_state::Builder::default()
             // Ignore fullscreen saved by older previews and retain the integrated chrome.
@@ -152,14 +188,22 @@ fn main() {
                 .on_navigation(move |target| target.origin().ascii_serialization() == origin)
                 .build()?;
             // OS visibility explicitly suspends only rendering. Audio remains independent.
+            // Window getters can synchronously re-enter the UI runtime. Never
+            // call them (or eval) while a native event listener is on its stack.
+            // One bounded worker coalesces resize/focus bursts outside that stack.
             let view = window.clone();
+            let (notify, events) = std::sync::mpsc::sync_channel::<()>(1);
+            std::thread::spawn(move || {
+                while events.recv().is_ok() {
+                    let Ok(hidden) = view.is_minimized() else { break; };
+                    let Ok(fullscreen) = view.is_fullscreen() else { break; };
+                    let Ok(maximized) = view.is_maximized() else { break; };
+                    if view.eval(&format!("window.dispatchEvent(new CustomEvent('rhine-desktop-visibility',{{detail:{{hidden:{hidden}}}}}));window.dispatchEvent(new CustomEvent('rhine-desktop-window-state',{{detail:{{fullscreen:{fullscreen},maximized:{maximized}}}}}));")).is_err() { break; }
+                }
+            });
             window.on_window_event(move |event| {
                 if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
-                    let hidden = view.is_minimized().unwrap_or(false);
-                    let _ = view.eval(&format!("window.dispatchEvent(new CustomEvent('rhine-desktop-visibility',{{detail:{{hidden:{hidden}}}}}))"));
-                    let fullscreen = view.is_fullscreen().unwrap_or(false);
-                    let maximized = view.is_maximized().unwrap_or(false);
-                    let _ = view.eval(&format!("window.dispatchEvent(new CustomEvent('rhine-desktop-window-state',{{detail:{{fullscreen:{fullscreen},maximized:{maximized}}}}}))"));
+                    let _ = notify.try_send(());
                 }
             });
             Ok(())

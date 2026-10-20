@@ -17,9 +17,9 @@ export class MusicBootFrameClock {
   private lastTime = 0;
   private appTime = MUSIC_BOOT_START_TIME;
 
-  reset(nowSeconds: number) {
+  reset(nowSeconds: number, startTime = MUSIC_BOOT_START_TIME) {
     this.lastTime = nowSeconds;
-    this.appTime = MUSIC_BOOT_START_TIME;
+    this.appTime = Math.max(MUSIC_BOOT_START_TIME, Math.min(MUSIC_BOOT_END_TIME, startTime));
   }
 
   update(nowSeconds: number) {

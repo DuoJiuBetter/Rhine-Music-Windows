@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { errorChain } from './online-error-chain.mjs';
 
-const operations = new Set(['search', 'playback', 'qrKey', 'qrCreate', 'qrCheck', 'status', 'playlists', 'playlistDetail', 'playlistTracks', 'songDetail', 'songInfo', 'album', 'lyric', 'start', 'poll', 'cancel', 'logout', 'cover', 'request']);
+const operations = new Set(['search', 'playback', 'qrKey', 'qrCreate', 'qrCheck', 'status', 'accountProfile', 'playlists', 'playlistWrite', 'playlistCreate', 'playlistRename', 'playlistDelete', 'playlistAdd', 'playlistRemove', 'playlistDetail', 'playlistTracks', 'songDetail', 'songInfo', 'album', 'lyric', 'start', 'poll', 'cancel', 'logout', 'cover', 'request', 'together', 'togetherStatus', 'togetherCreate', 'togetherJoin', 'togetherEnd', 'togetherHeartbeat', 'togetherPlaylist', 'togetherQueue', 'togetherCommand']);
 const networkCodes = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_ABORTED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR', 'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE']);
 const diagnostics = new WeakMap();
 const number = value => {
@@ -63,6 +63,6 @@ export function onlineRouteContext(requestUrl) {
   const match = /^\/api\/online\/(netease|qq|bodian)\/(.+)$/.exec(String(requestUrl || '').split('?')[0]);
   if (!match) return undefined;
   const suffix = match[2];
-  const operation = suffix.startsWith('prepare/') ? 'playback' : suffix.startsWith('songs/') ? 'songInfo' : suffix.startsWith('playlists/') ? 'playlistTracks' : suffix.startsWith('auth/') ? suffix.slice(5) : suffix;
+  const operation = suffix === 'playlist-management' ? 'playlistWrite' : suffix.startsWith('prepare/') ? 'playback' : suffix.startsWith('songs/') ? 'songInfo' : suffix.startsWith('playlists/') ? 'playlistTracks' : suffix.startsWith('auth/') ? suffix.slice(5) : suffix;
   return { provider: match[1], operation: operations.has(operation) ? operation : 'request' };
 }

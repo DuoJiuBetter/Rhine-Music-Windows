@@ -1,0 +1,31 @@
+.queue-view-tools { position: absolute; z-index: 21; top: 138px; left: var(--page-pad, 42px); max-width: min(620px, calc(100% - 84px)); pointer-events: none; }
+/* Global reduced-motion duration must not create implicit layout transitions. */
+.queue-view-tools, .queue-view-tools * { transition-property: none; }
+.queue-view-tools[hidden], .queue-drawer[hidden] { display: none; }
+.queue-view-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--surface) 78%, transparent); backdrop-filter: blur(20px); pointer-events: auto; font-size: 12px; }
+.queue-view-toolbar > span { color: var(--ink); font-weight: 600; }
+.queue-view-toolbar small { color: var(--muted); font-weight: 400; margin-left: 5px; }
+.queue-view-tools button { font: inherit; color: var(--muted); border: 0; background: transparent; padding: 5px 0; cursor: pointer; }
+.queue-view-tools button:hover:not(:disabled) { color: var(--accent); }
+.queue-view-tools button:disabled { opacity: .35; cursor: default; }
+.queue-view-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.queue-drawer { width: min(500px, 100%); max-height: min(calc(var(--queue-height, 100vh) * .54), 540px); margin-top: 10px; padding: 12px 16px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(24px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; pointer-events: auto; }
+.queue-drawer ol { list-style: none; padding: 0; margin: 0; }
+.queue-drawer li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.queue-drawer li[aria-current] .queue-track { color: var(--accent); }
+.queue-drawer .queue-track { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; text-align: left; }
+.queue-track > span:last-child { min-width: 0; }
+.queue-track :is(strong, small) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.queue-track strong { font-size: 13px; font-weight: 500; }
+.queue-track small { font-size: 10px; margin-top: 5px; color: var(--muted); }
+.queue-row-number { min-width: 22px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.queue-row-actions { display: flex; flex-shrink: 0; gap: 3px; }
+.queue-row-actions button { width: 28px; height: 32px; font-size: 17px; }
+.queue-mode-note, .queue-empty { font-size: 11px; color: var(--muted); line-height: 1.8; }
+.music-app[data-queue-view="true"] .music-browse { --queue-shelf: 1; }
+@media (max-width: 1200px) { .music-topnav #play-queue-button > span { display: none; } }
+.queue-view-tools[data-compact="true"] { top: 112px; left: 24px; max-width: calc(100% - 48px); }
+.queue-view-tools[data-compact="true"] .queue-view-toolbar { padding: 8px 12px; gap: 8px 12px; }
+.queue-view-tools[data-compact="true"] .queue-drawer { max-height: calc(var(--queue-height, 100vh) * .46); }
+.music-app[data-layout="portrait"] .music-topnav { grid-template-columns: 28px 28px 28px minmax(0, 1fr) minmax(64px, 102px); }
+.music-app[data-layout="portrait"] .music-topnav:has(#my-playlists-button:not([hidden])) { grid-template-columns: 28px 28px 28px 28px minmax(0, 1fr) minmax(64px, 102px); }

@@ -7,7 +7,7 @@
 .desktop-chrome svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1; }
 .desktop-chrome button:hover { background: rgba(0,0,0,.065); }
 .desktop-chrome button:active { background: rgba(0,0,0,.12); }
-.desktop-chrome button:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
+.desktop-chrome button:focus-visible { outline: none; }
 .desktop-chrome button[data-window="close"]:hover { color: white; background: #c42b1c; }
 .desktop-chrome button[data-window="close"]:active { color: white; background: #a82116; }
 html:has(.music-app[data-theme="night"]) .desktop-chrome { color: #b5bfcc; }

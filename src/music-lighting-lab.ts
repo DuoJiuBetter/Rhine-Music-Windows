@@ -242,7 +242,8 @@ export function setupLightingLab(
   }
 
   syncExpanded();
-  apply();
+  // Reading initial settings must not rewrite navigation parameters.
+  apply(false);
   return {
     setEnabled(enabled) {
       if (!enabled) {

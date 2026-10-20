@@ -17,7 +17,7 @@ const budgetBokeh = /* glsl */ `
   varying vec2 vUv;
   uniform sampler2D tColor;
   uniform sampler2D tDepth;
-  uniform float maxblur, aperture, nearClip, farClip, focus, aspect, budgetWidth;
+  uniform float maxblur, aperture, nearClip, farClip, focus, aspect, budgetWidth, rapidMotion;
   #include <common>
   #include <packing>
   void main() {
@@ -35,6 +35,13 @@ const budgetBokeh = /* glsl */ `
     vec2 radius = vec2(1.0, aspect) * clamp((focus + z) * aperture, -maxblur, maxblur) * 0.4;
     vec4 color = texture2D(tColor, vUv);
     if (abs(radius.x) * budgetWidth < 0.5) { gl_FragColor = vec4(color.rgb, 1.0); return; }
+    if (rapidMotion > 0.5) {
+      color += texture2D(tColor,vUv+radius*vec2(1.0,0.0));
+      color += texture2D(tColor,vUv+radius*vec2(-1.0,0.0));
+      color += texture2D(tColor,vUv+radius*vec2(0.0,1.0));
+      color += texture2D(tColor,vUv+radius*vec2(0.0,-1.0));
+      gl_FragColor=vec4(color.rgb/5.0,1.0);return;
+    }
     for (int i = 0; i < 8; i++) {
       float angle = float(i) * 0.785398163;
       color += texture2D(tColor, vUv + radius * vec2(cos(angle), sin(angle)));
@@ -70,6 +77,7 @@ export class SharedDepthBokehPass extends BokehPass {
     super(...args);
     this.originalBokeh = this.materialBokeh.fragmentShader;
     this.materialBokeh.uniforms.budgetWidth = { value: 1 };
+    this.materialBokeh.uniforms.rapidMotion = { value: 0 };
     this.sharedMaterial = new ShaderMaterial({
       name: "RhineSharedDepthBokeh",
       uniforms: Object.fromEntries(
@@ -153,6 +161,10 @@ export class SharedDepthBokehPass extends BokehPass {
     this.compositeQuad = new FullScreenQuad(this.compositeMaterial);
   }
   depthSource?: () => Texture | null;
+  setMotionBudget(strength: number) {
+    this.materialBokeh.uniforms.rapidMotion.value=strength;
+    this.sharedMaterial.uniforms.rapidMotion.value=strength;
+  }
   setResolutionScale(value: number) {
     this.resolutionScale = Math.min(1, Math.max(0.5, value));
     const fragment = this.resolutionScale < 1 ? budgetBokeh : this.originalBokeh;
@@ -187,7 +199,7 @@ export class SharedDepthBokehPass extends BokehPass {
       height: this.blurTarget.height,
       reducedFrames: this.reducedFrames,
       fallbackFrames: this.fallbackFrames,
-      colorSamples: this.resolutionScale < 1 ? 13 : 41,
+      colorSamples: this.resolutionScale < 1 ? (this.sharedMaterial.uniforms.rapidMotion.value>.5?5:13) : 41,
     };
   }
   override render(

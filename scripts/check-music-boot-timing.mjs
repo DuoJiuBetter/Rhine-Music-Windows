@@ -140,6 +140,33 @@ function bootFixture(reduced = false, withHeader = false) {
 }
 
 const actual = bootFixture();
+// Startup bypasses only the 2D prologue, keeping the original live wave clock,
+// endpoint handoff, skip and reduced-motion behavior.
+const shelf = bootFixture();
+shelf.boot.startScene(100);
+let shelfFrame = shelf.boot.update(100);
+close(shelfFrame.appTime, MUSIC_BOOT_SCENE_START, 'Shelf startup begins at the live scene');
+close(shelfFrame.cinema.time, 21.92, 'The forward wave has not been consumed by loading');
+assert.equal(shelfFrame.renderScene, true);
+assert.equal(shelf.boot.root.children[0].hidden, true, 'No logo/slogan or opaque paper covers the startup wave');
+close(shelf.boot.update(103.5).appTime, MUSIC_BOOT_SCENE_START + .05, 'Cold first frame cannot skip the wave');
+shelf.boot.startScene(200);
+for (let frame = 0; frame <= 312; frame++) shelfFrame = shelf.boot.update(200 + frame / 60);
+close(shelfFrame.appTime, END, 'Startup retains the full 5.2 second wave');
+assert.deepEqual(shelf.completed, [], 'The final live scene renders before handoff');
+shelf.boot.update(200 + 313 / 60);
+await Promise.resolve();
+assert.deepEqual(shelf.completed, ['complete']);
+assert.equal(shelf.boot.active, false);
+assert.equal(shelf.controls.inert, false);
+shelf.boot.replay(300);
+assert.equal(shelf.boot.update(300).appTime, START, 'Developer replay still uses the full prologue');
+shelf.boot.dispose();
+const reducedShelf = bootFixture(true);
+reducedShelf.boot.startScene(0);
+assert.deepEqual(reducedShelf.completed, ['skip']);
+assert.equal(reducedShelf.boot.active, false, 'Reduced motion bypasses the startup wave immediately');
+
 actual.boot.start(100);
 assert.equal(actual.boot.update(100).appTime, START);
 assert.equal(actual.scene.inert, true);

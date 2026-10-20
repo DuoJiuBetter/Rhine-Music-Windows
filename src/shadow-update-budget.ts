@@ -16,6 +16,7 @@ export class ShadowUpdateBudget {
     active: boolean,
     tolerance: number,
     nowSeconds = Infinity,
+    activeHz = 30,
   ) {
     let changed =
       this.invalid || active || state.length !== this.previous.length;
@@ -31,7 +32,7 @@ export class ShadowUpdateBudget {
       }
     if (changed) {
       // Explicit quality/light/reset invalidation bypasses the cadence limit.
-      const interval = active ? 1 / 30 : 1 / 8;
+      const interval = active ? 1 / Math.max(1,activeHz) : 1 / 8;
       if (!this.invalid &&
         Number.isFinite(nowSeconds) && nowSeconds - this.lastUpdate < interval) {
         this.throttled++; this.skipped++; this.reason = "cadence";

@@ -69,8 +69,7 @@
 .music-app input:focus-visible,
 .music-app textarea:focus-visible,
 .music-app select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline: none;
 }
 .music-app button:disabled {
   opacity: 0.38;
@@ -463,6 +462,7 @@
 }
 .music-detail {
   --detail-content-top: 170px;
+  --detail-content-bottom: 52px;
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -515,7 +515,7 @@
   left: 58%;
   right: 4.5%;
   top: var(--detail-content-top);
-  bottom: 52px;
+  bottom: var(--detail-content-bottom);
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
@@ -1278,7 +1278,8 @@
 #music-loading {
   position: absolute;
   inset: 0;
-  z-index: 40;
+  z-index: 5;
+  pointer-events: none;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -1286,6 +1287,7 @@
   gap: 14px;
   background: var(--page-bg);
 }
+#music-loading button { pointer-events: auto; }
 #music-loading strong {
   font-size: 11px;
   letter-spacing: 3px;
@@ -1414,9 +1416,7 @@
   }
   .music-detail {
     --detail-content-top: 210px;
-  }
-  .music-detail #album-detail-content {
-    bottom: 75px;
+    --detail-content-bottom: 75px;
   }
   .music-back {
     top: 144px;
@@ -1555,11 +1555,11 @@
   }
   .music-detail {
     --detail-content-top: 132px;
+    --detail-content-bottom: 40px;
   }
   .music-detail #album-detail-content {
     right: 4%;
     left: 56%;
-    bottom: 40px;
   }
   .album-facts {
     gap: 12px 14px;
@@ -1857,8 +1857,10 @@
 .music-app[data-layout="portrait"] #album-detail-content {
   left: clamp(22px, 4vw, 42px);
   right: clamp(18px, 4vw, 42px);
-  top: 50%;
-  bottom: 28px;
+  --detail-content-top: 50%;
+  --detail-content-bottom: 28px;
+  top: var(--detail-content-top);
+  bottom: var(--detail-content-bottom);
   padding-right: 5px;
 }
 .music-app[data-layout="portrait"] .card-caption {

@@ -215,7 +215,9 @@ export class CardAppearance {
       const mesh = child as THREE.Mesh;
       const mat = mesh.material as THREE.MeshBasicMaterial;
       if (mesh.userData.albumCover) mesh.userData.coverDisposed = true;
-      if (!mesh.userData.surface) mat.map?.dispose();
+      if (typeof mesh.userData.coverRelease === "function") {
+        mesh.userData.coverRelease(); delete mesh.userData.coverRelease;
+      } else if (!mesh.userData.surface && !mat.map?.userData.selectedCoverCache) mat.map?.dispose();
       mat.dispose();
     }
   }
